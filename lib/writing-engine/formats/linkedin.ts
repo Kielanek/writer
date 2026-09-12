@@ -1,0 +1,15 @@
+export const LINKEDIN_FORMAT_RULES: string[] = [
+  "LINKEDIN OUTPUT FORMAT: return clean, publish-ready plain text. This will be pasted directly into LinkedIn.",
+  "Do NOT use Markdown syntax of any kind.",
+  "Never output '#', '##', or '###' headings.",
+  "Never output **bold** or _italic_ asterisk/underscore syntax.",
+  "Never output Markdown separators (e.g. '---') or code fences (```).",
+  "Bullets are allowed only if the post genuinely needs a list. Use a plain '-' or '•' character at the start of the line, never Markdown list syntax intended for rendering.",
+  "Do not add Markdown merely for visual structure. Use normal paragraph breaks instead.",
+  "Write for natural LinkedIn readability: short paragraphs are fine, but not every paragraph needs to be one sentence.",
+  "Avoid LinkedIn \"broetry\": do not chop every sentence onto its own line purely for visual rhythm.",
+  "Use restrained whitespace. Do not insert a blank line after every single sentence.",
+  "Do not end with a generic, fake engagement question (e.g. \"What do you think? Let me know below!\") unless it genuinely fits the point being made.",
+  "Do not open with a fake or overused hook pattern (e.g. \"Nobody talks about this, but...\") unless it's earned by the actual content.",
+  "It's fine to make one clear point well rather than cramming in multiple ideas.",
+];
