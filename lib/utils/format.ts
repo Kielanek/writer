@@ -24,6 +24,11 @@ export function formatDateTime(isoDate: string): string {
   });
 }
 
+export function formatShortDate(isoDate: string): string {
+  const date = new Date(isoDate);
+  return date.toLocaleDateString("en-US", { month: "short", day: "numeric" });
+}
+
 export function formatDuration(seconds: number | null | undefined): string {
   if (seconds == null) return "";
   const mins = Math.floor(seconds / 60);

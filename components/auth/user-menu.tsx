@@ -2,7 +2,8 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { LogOut, User } from "lucide-react";
+import Link from "next/link";
+import { BarChart2, LogOut, User } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -39,6 +40,13 @@ export function UserMenu({ email }: { email: string }) {
         <DropdownMenuLabel className="max-w-[220px] truncate font-normal text-muted-foreground">
           {email}
         </DropdownMenuLabel>
+        <DropdownMenuSeparator />
+        <DropdownMenuItem asChild>
+          <Link href="/account">
+            <BarChart2 className="size-4" />
+            Account &amp; Usage
+          </Link>
+        </DropdownMenuItem>
         <DropdownMenuSeparator />
         <DropdownMenuItem onSelect={handleLogout} disabled={loggingOut}>
           <LogOut className="size-4" />

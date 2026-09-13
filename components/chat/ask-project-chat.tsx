@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { ConfirmDialog } from "@/components/confirm-dialog";
 import { formatDateTime } from "@/lib/utils/format";
+import { resolveApiErrorMessage } from "@/lib/utils/apiError";
 import type { ProjectChatMessage } from "@/types";
 
 export function AskProjectChat({
@@ -37,7 +38,7 @@ export function AskProjectChat({
 
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
-        throw new Error(data.error || "Failed to get an answer.");
+        throw new Error(resolveApiErrorMessage(data, "Failed to get an answer."));
       }
 
       const { userMessage, assistantMessage } = await res.json();

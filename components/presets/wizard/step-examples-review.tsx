@@ -9,6 +9,7 @@ import { DOCUMENT_TYPE_LABELS } from "@/types";
 import type { DocumentType } from "@/types";
 import type { WizardState } from "@/components/presets/wizard/wizard-types";
 import type { ExampleAnalysisResult } from "@/lib/ai/analyzeWritingExamples";
+import { resolveApiErrorMessage } from "@/lib/utils/apiError";
 
 function readable(value: string): string {
   return value.replace(/_/g, " ");
@@ -52,7 +53,7 @@ export function StepExamplesReview({
       });
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
-        throw new Error(data.error || "Failed to analyze examples.");
+        throw new Error(resolveApiErrorMessage(data, "Failed to analyze examples."));
       }
       const data: ExampleAnalysisResult = await res.json();
       setResult(data);

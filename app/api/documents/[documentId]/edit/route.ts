@@ -4,8 +4,10 @@ import { buildProjectContext, ProjectContextError, ProjectNotFoundError } from "
 import { generateDocumentEdit, AiGenerationError } from "@/lib/ai/documentGeneration";
 import { resolveDocumentPresetSnapshot } from "@/lib/writing-engine/snapshot";
 import { resolveDocumentSeoConfig } from "@/lib/writing-engine/seoKeywords";
+import { checkAiActionLimit, recordUsageEvent } from "@/lib/entitlements/usage";
 import { aiEditDocumentSchema, uuidSchema } from "@/lib/validation/schemas";
 import { ApiError, withApiErrorHandling } from "@/lib/utils/api";
+import { env } from "@/lib/env";
 
 interface RouteParams {
   params: Promise<{ documentId: string }>;
@@ -42,6 +44,8 @@ export const POST = withApiErrorHandling(async (request: NextRequest, { params }
     throw err;
   }
 
+  await checkAiActionLimit();
+
   let revisedContent: string;
   try {
     revisedContent = await generateDocumentEdit({
@@ -57,6 +61,12 @@ export const POST = withApiErrorHandling(async (request: NextRequest, { params }
     if (err instanceof AiGenerationError) throw new ApiError(502, err.message);
     throw err;
   }
+
+  await recordUsageEvent({
+    eventType: "ai_action",
+    quantity: 1,
+    metadata: { feature: "document_edit", model: env.openaiTextModel(), documentType: document.type },
+  });
 
   const version = await createDocumentVersion({
     documentId,

@@ -21,10 +21,18 @@ Next.js (App Router) + TypeScript + Tailwind + shadcn/ui + Supabase
 
 Create a project at [supabase.com](https://supabase.com), then open the SQL
 Editor and run every file in `supabase/migrations/` **in order**
-(`0001_init.sql` through `0006_auth_and_rls.sql`). `0006_auth_and_rls.sql` is
-the Auth migration — it adds `user_id` ownership columns, indexes, and Row
-Level Security policies to every user-owned table, and updates
-`create_document_version` to enforce and stamp ownership.
+(`0001_init.sql` through `0009_provider_cost_budget.sql`).
+`0006_auth_and_rls.sql` is the Auth migration — it adds `user_id` ownership
+columns, indexes, and Row Level Security policies to every user-owned
+table, and updates `create_document_version` to enforce and stamp
+ownership. `0007_usage_limits.sql` is the Usage/Limits migration — see
+[Usage limits](#usage-limits) below. `0008` is a required bugfix for
+`0007`'s `create_project_with_limit()` function (it needs
+`SECURITY DEFINER`, not `SECURITY INVOKER`, to be able to insert into
+`projects` after that same migration revokes direct `INSERT` on it) — don't
+skip it. `0009_provider_cost_budget.sql` adds the real-dollar trial cost
+budget — see [Provider cost budget (trial safety cap)](#provider-cost-budget-trial-safety-cap)
+below.
 
 ### 2. Configure environment variables
 
@@ -113,6 +121,152 @@ running it again only ever picks up rows still unclaimed.
   update rejected) — paste it into the SQL Editor and run it. It's wrapped
   in `begin`/`rollback`, so it never leaves any test data behind.
 
+## Usage limits
+
+Every account has a plan (`development` or `pro`, code-defined in
+`lib/entitlements/plans.ts`) with three limits: max Projects, AI Actions per
+calendar month, and transcription minutes per calendar month. No Stripe yet
+— every new signup gets the `development` plan automatically (via a
+Postgres trigger, see below), and its limits are deliberately generous for
+testing, not final pricing.
+
+**What counts as an AI Action** (1 action each): Generate Document, AI Edit,
+Ask Project, Analyze Writing Examples. Note title/description generation
+(automatic, on every note/transcription) is intentionally NOT counted or
+limited — charging an invisible side effect of creating a note would be
+confusing, and notes are core to the product.
+
+**Transcription** is tracked in seconds internally (shown as minutes in the
+UI) and always uses Whisper's own reported audio duration — never a
+client-supplied value, which would be easy to fake. Because that duration
+isn't known until after transcription completes, the pre-flight check can
+only block a request that's already at/over the limit, not cap the exact
+amount an in-flight file will use — a single long file can push usage
+slightly over before the next one is blocked. This is a deliberate,
+documented MVP tradeoff (see `checkTranscriptionAllowance()` in
+`lib/entitlements/usage.ts`), not an oversight.
+
+**Where enforcement actually happens**: `lib/entitlements/usage.ts`
+(`checkAiActionLimit`, `checkTranscriptionAllowance`, `recordUsageEvent`,
+`getUserEntitlements`) is the only place limit logic lives — no route
+hardcodes a threshold. A blocked action returns HTTP 429 with
+`{"error": "usage_limit_reached", "resource": ..., "used": ..., "limit": ..., "resetsAt": ...}`
+(mapped centrally in `lib/utils/api.ts`), and the UI shows a plain message
+("You've reached your monthly AI limit. Plan upgrades are coming soon.")
+rather than that raw code — see `lib/utils/apiError.ts`.
+
+**Concurrency**: Project creation is fully race-proof — the
+`create_project_with_limit()` Postgres function (in
+`0007_usage_limits.sql`) serializes concurrent attempts from the same user
+with a transaction-scoped advisory lock before counting and inserting, and
+`authenticated` has no direct INSERT grant on `projects` at all, so this is
+the only way to create one. AI-action and transcription limits are
+check-then-record (not reserved), since the "action" is an external OpenAI
+call that can take several seconds — two requests fired at nearly the same
+instant could both pass the check before either's usage is recorded,
+allowing a small overrun bounded by how many requests one user has in
+flight at once. Documented rather than solved with a full reservation
+ledger, which is out of scope for this MVP.
+
+**New/existing users automatically get a plan**: a `handle_new_user()`
+trigger on `auth.users` creates a `profiles` row (`plan_id = 'development'`)
+for every signup, and the migration backfills one for every account that
+already existed. `getUserPlan()` also has a defensive fallback to the
+default plan if a profile is ever missing, so this can never hard-fail a
+request.
+
+Verify with `supabase/tests/usage_rls_verification.sql` (same
+begin/rollback pattern as the Auth one): a user can read their own
+plan/usage and never another user's, cannot change their own `plan_id`
+(zero UPDATE grant, for anyone), cannot insert a fake usage event (zero
+INSERT grant), `anon` has no access at all, and the project-limit RPC both
+assigns ownership correctly and blocks at the limit.
+
+## Provider cost budget (trial safety cap)
+
+On top of the product-facing limits above, the `trial` plan carries a
+**hard internal cap on real OpenAI spend** (`apiCostBudgetUsd: 0.50` in
+`lib/entitlements/plans.ts`) — a trial account can never cost meaningfully
+more than about $0.50 in actual provider fees, independent of how the
+Projects/AI Actions/Transcription numbers are tuned. This is entirely
+internal: the user only ever sees the friendly limits (Projects, AI
+Actions, Transcription minutes) — never a dollar figure, never anything
+resembling "you cost us $0.37."
+
+**Pricing config**: `lib/entitlements/provider-pricing.ts` is the *only*
+place per-token/per-minute prices live. Currently priced: `gpt-5.6-terra`
+(text — $2.00/$0.20/$12.00 per 1M uncached-input/cached-input/output
+tokens) and `gpt-transcribe` (transcription — $0.0045/minute).
+
+**⚠️ Known gap, please resolve before relying on trial transcription**:
+`OPENAI_TRANSCRIPTION_MODEL` defaults to `whisper-1` (see `.env.local`),
+but the only transcription pricing configured is for `gpt-transcribe` — a
+different model. No invented price was added for `whisper-1` (only
+verified numbers go in the pricing config). Until you either (a) add a
+verified `whisper-1` price to `provider-pricing.ts`, or (b) switch
+`OPENAI_TRANSCRIPTION_MODEL` to `gpt-transcribe`, **trial accounts cannot
+transcribe audio at all** — every attempt fails closed (see "Unknown model
+safety" below) rather than silently transcribing for free. Development/pro
+accounts are unaffected (they have no cost cap to protect, so an unpriced
+model there just logs a warning and proceeds).
+
+**Unknown model safety**: a cost calculation for a model with no pricing
+entry throws (`UnknownModelPricingError`) rather than silently returning
+$0. For a plan with no cost cap (development, pro), that's caught, logged,
+and the action proceeds anyway (nothing to protect). For a cost-capped plan
+(trial), it's NOT caught — the action is blocked and the error is logged
+server-side, since allowing an unpriced model through would silently
+defeat the entire budget.
+
+**Pre-call reservation, not just post-call accounting**: every OpenAI call
+made by a cost-capped plan reserves a conservative worst-case cost estimate
+*before* the request goes out (text: prompt length ÷ 4 for input tokens +
+a per-feature max-output-tokens ceiling from `FEATURE_COST_GUARDS`, which
+is also passed as the real `max_completion_tokens` on the live request, so
+it's a true upper bound, not a hope; transcription: file size ÷ a
+conservative 32kbps floor). `reserve_provider_budget()` (Postgres, in
+`0009_provider_cost_budget.sql`) atomically checks that reservation against
+already-committed cost — completed spend plus any other still-open
+reservation — under a per-user advisory lock, so two simultaneous requests
+can't both slip under the same remaining budget. After the real request
+succeeds, the reservation is reconciled to the provider's *actual* reported
+cost (never the estimate); on failure, it's released with nothing charged.
+
+**Product usage vs. provider usage**: a single user-facing "AI Action" can
+involve more than one real OpenAI call (e.g. Article generation followed
+by an automatic keyword-repair pass) — every actual call's real cost is
+tracked as its own `provider_cost` usage event, independent of the single
+`ai_action` product-counter event the user sees. The same split covers
+fully automatic calls that never count as an AI Action at all (note
+title/description generation) — their cost still counts against the trial
+budget, it's just invisible in the "AI Actions used" counter. See
+`lib/ai/guarded.ts`'s module doc for the full reasoning.
+
+**Budget period**: the $0.50 budget is NOT calendar-month scoped like the
+product limits — it would be a loophole for a trial account to get another
+$0.50 just because the month rolled over. It's summed since the account's
+`profiles.created_at`, a temporary stand-in for the not-yet-built
+`trial_started_at`/`trial_ends_at` (see `get_provider_cost_total()` and
+`reserve_provider_budget()`'s doc comments) — swapping to a real trial
+period later only changes that one column reference.
+
+**Assigning the trial plan** (no Stripe/signup automation yet):
+
+```bash
+npm run set-user-plan -- <USER_UUID> trial
+npm run set-user-plan -- <USER_UUID> development   # switch back
+```
+
+Your own development account stays on `development` (no cost cap) unless
+you explicitly run this — signing up normally never assigns `trial`.
+
+Verify with `supabase/tests/provider_cost_rls_verification.sql`: no one
+(not even the owning user) can read `provider_cost_reservations` directly,
+`reserve_provider_budget()` blocks once exhausted, a different user can't
+reconcile/release someone else's reservation, `get_provider_cost_total()`
+only ever sums the caller's own cost, and `plan_id` still can't be changed
+by the client.
+
 ## Checks
 
 ```bash
@@ -120,7 +274,8 @@ npm run lint       # ESLint
 npx tsc --noEmit   # Type checking
 npm run test       # Vitest — critical business logic (context isolation,
                     # version numbering, restore semantics, metadata
-                    # fallback, cascading deletes)
+                    # fallback, cascading deletes, usage limits, provider
+                    # cost accounting)
 ```
 
 ## Architecture notes

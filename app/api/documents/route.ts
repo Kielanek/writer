@@ -5,9 +5,11 @@ import { generateDocumentContent, AiGenerationError } from "@/lib/ai/documentGen
 import { resolvePreset } from "@/lib/writing-engine/customPresets/service";
 import { buildPresetSnapshot } from "@/lib/writing-engine/snapshot";
 import { WRITING_ENGINE_VERSION } from "@/lib/writing-engine/version";
+import { checkAiActionLimit, recordUsageEvent } from "@/lib/entitlements/usage";
 import { createDocumentSchema } from "@/lib/validation/schemas";
 import { ApiError, withApiErrorHandling } from "@/lib/utils/api";
 import { DOCUMENT_TYPE_LABELS } from "@/types";
+import { env } from "@/lib/env";
 
 /** Generates a brand-new Document from the Project's Notes and creates its v1 (initial) version. */
 export const POST = withApiErrorHandling(async (request: NextRequest) => {
@@ -27,6 +29,8 @@ export const POST = withApiErrorHandling(async (request: NextRequest) => {
     throw err;
   }
 
+  await checkAiActionLimit();
+
   let content: string;
   try {
     content = await generateDocumentContent({
@@ -40,6 +44,12 @@ export const POST = withApiErrorHandling(async (request: NextRequest) => {
     if (err instanceof AiGenerationError) throw new ApiError(502, err.message);
     throw err;
   }
+
+  await recordUsageEvent({
+    eventType: "ai_action",
+    quantity: 1,
+    metadata: { feature: "document_generation", model: env.openaiTextModel(), documentType: input.type },
+  });
 
   const document = await createDocument({
     projectId: input.projectId,

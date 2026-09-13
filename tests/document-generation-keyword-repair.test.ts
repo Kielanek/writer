@@ -1,8 +1,25 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
+import { fakeDb, FAKE_USER_ID } from "./fakeSupabase";
 
 vi.mock("@/lib/ai/generateText", () => ({
   generateText: vi.fn(),
   AiGenerationError: class AiGenerationError extends Error {},
+}));
+
+// guardedGenerateText (lib/ai/guarded.ts) wraps generateText with provider-
+// cost accounting — these tests use the FAKE_USER_ID's default
+// "development" plan (no profiles row seeded => apiCostBudgetUsd === null),
+// so no reservation RPC is ever called; only recordUsageEvent's admin-client
+// insert runs, which these three mocks route to the same in-memory fake.
+vi.mock("@/lib/db/client", () => ({
+  getSupabaseServerClient: () => fakeDb,
+}));
+vi.mock("@/lib/supabase/auth", () => ({
+  requireUser: async () => ({ id: FAKE_USER_ID }),
+  getAuthedUser: async () => ({ id: FAKE_USER_ID }),
+}));
+vi.mock("@/lib/supabase/admin", () => ({
+  createAdminClient: () => fakeDb,
 }));
 
 import { generateText, AiGenerationError } from "@/lib/ai/generateText";
@@ -10,6 +27,10 @@ import { generateDocumentContent, generateDocumentEdit } from "@/lib/ai/document
 import type { ProjectContext } from "@/lib/context/buildProjectContext";
 import type { PresetSnapshot } from "@/lib/writing-engine/types";
 import type { SeoKeywordConfig } from "@/lib/writing-engine/seoKeywords";
+
+function textResult(text: string) {
+  return { text, usage: null };
+}
 
 const fakeContext: ProjectContext = {
   project: { id: "p1", user_id: "u1", name: "Test Project", description: null, created_at: "", updated_at: "" },
@@ -36,12 +57,14 @@ const seoKeywords: SeoKeywordConfig = {
 
 beforeEach(() => {
   vi.mocked(generateText).mockReset();
+  Object.keys(fakeDb.tables).forEach((key) => delete fakeDb.tables[key]);
+  fakeDb.currentUserId = FAKE_USER_ID;
 });
 
 describe("generateDocumentContent — keyword coverage enforcement", () => {
   it("returns the content as-is, with a single generateText call, when every keyword is already present", async () => {
     vi.mocked(generateText).mockResolvedValueOnce(
-      "# Digital Products on Etsy\n\nEtsy SEO matters. Check out these Etsy product ideas."
+      textResult("# Digital Products on Etsy\n\nEtsy SEO matters. Check out these Etsy product ideas.")
     );
 
     const content = await generateDocumentContent({
@@ -58,9 +81,13 @@ describe("generateDocumentContent — keyword coverage enforcement", () => {
 
   it("runs exactly one repair pass when a keyword is missing, and returns the repaired content", async () => {
     vi.mocked(generateText)
-      .mockResolvedValueOnce("# Digital Products on Etsy\n\nEtsy SEO matters a lot.") // missing "Etsy product ideas"
       .mockResolvedValueOnce(
-        "# Digital Products on Etsy\n\nEtsy SEO matters a lot. Looking for Etsy product ideas? Start here."
+        textResult("# Digital Products on Etsy\n\nEtsy SEO matters a lot.") // missing "Etsy product ideas"
+      )
+      .mockResolvedValueOnce(
+        textResult(
+          "# Digital Products on Etsy\n\nEtsy SEO matters a lot. Looking for Etsy product ideas? Start here."
+        )
       );
 
     const content = await generateDocumentContent({
@@ -77,8 +104,10 @@ describe("generateDocumentContent — keyword coverage enforcement", () => {
 
   it("does not loop: if the repair pass still misses a keyword, the repaired content is returned anyway", async () => {
     vi.mocked(generateText)
-      .mockResolvedValueOnce("# Digital Products on Etsy\n\nEtsy SEO matters a lot.")
-      .mockResolvedValueOnce("# Digital Products on Etsy\n\nEtsy SEO matters a lot, still missing one term.");
+      .mockResolvedValueOnce(textResult("# Digital Products on Etsy\n\nEtsy SEO matters a lot."))
+      .mockResolvedValueOnce(
+        textResult("# Digital Products on Etsy\n\nEtsy SEO matters a lot, still missing one term.")
+      );
 
     const content = await generateDocumentContent({
       context: fakeContext,
@@ -94,7 +123,7 @@ describe("generateDocumentContent — keyword coverage enforcement", () => {
 
   it("falls back to the original content if the repair pass itself fails, without throwing", async () => {
     vi.mocked(generateText)
-      .mockResolvedValueOnce("# Digital Products on Etsy\n\nEtsy SEO matters a lot.")
+      .mockResolvedValueOnce(textResult("# Digital Products on Etsy\n\nEtsy SEO matters a lot."))
       .mockRejectedValueOnce(new AiGenerationError("model unavailable"));
 
     const content = await generateDocumentContent({
@@ -110,7 +139,7 @@ describe("generateDocumentContent — keyword coverage enforcement", () => {
   });
 
   it("skips coverage checking entirely when seoKeywords is null (legacy Article)", async () => {
-    vi.mocked(generateText).mockResolvedValueOnce("Some content with no keywords at all.");
+    vi.mocked(generateText).mockResolvedValueOnce(textResult("Some content with no keywords at all."));
 
     const content = await generateDocumentContent({
       context: fakeContext,
@@ -128,9 +157,11 @@ describe("generateDocumentContent — keyword coverage enforcement", () => {
 describe("generateDocumentEdit — keyword coverage enforcement", () => {
   it("repairs a keyword accidentally dropped by an AI edit before returning", async () => {
     vi.mocked(generateText)
-      .mockResolvedValueOnce("# Digital Products on Etsy\n\nShorter now, Etsy SEO gone.") // AI edit dropped keywords
       .mockResolvedValueOnce(
-        "# Digital Products on Etsy\n\nShorter now. Etsy SEO and Etsy product ideas both included."
+        textResult("# Digital Products on Etsy\n\nShorter now, Etsy SEO gone.") // AI edit dropped keywords
+      )
+      .mockResolvedValueOnce(
+        textResult("# Digital Products on Etsy\n\nShorter now. Etsy SEO and Etsy product ideas both included.")
       );
 
     const content = await generateDocumentEdit({
@@ -150,7 +181,7 @@ describe("generateDocumentEdit — keyword coverage enforcement", () => {
 
   it("does not run a repair pass when the edited content already keeps every keyword", async () => {
     vi.mocked(generateText).mockResolvedValueOnce(
-      "# Digital Products on Etsy\n\nEtsy SEO matters. Etsy product ideas too, still here."
+      textResult("# Digital Products on Etsy\n\nEtsy SEO matters. Etsy product ideas too, still here.")
     );
 
     await generateDocumentEdit({

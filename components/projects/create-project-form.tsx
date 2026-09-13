@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
+import { resolveApiErrorMessage } from "@/lib/utils/apiError";
 
 export function CreateProjectForm() {
   const router = useRouter();
@@ -28,7 +29,7 @@ export function CreateProjectForm() {
 
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
-        throw new Error(data.error || "Failed to create project.");
+        throw new Error(resolveApiErrorMessage(data, "Failed to create project."));
       }
 
       const { project } = await res.json();

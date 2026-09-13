@@ -2,8 +2,9 @@ import { randomUUID } from "crypto";
 
 /**
  * A minimal in-memory stand-in for the Supabase JS client, supporting just
- * the query shapes used by lib/db/*.ts. Good enough to unit-test our data
- * access + context-isolation logic without a real Postgres instance.
+ * the query shapes used by lib/db/*.ts and lib/entitlements/*.ts. Good
+ * enough to unit-test our data access + context-isolation logic without a
+ * real Postgres instance.
  *
  * Foreign-key cascade behavior (on delete cascade) is emulated here to
  * mirror supabase/migrations/0001_init.sql, but the migration itself is the
@@ -19,26 +20,30 @@ import { randomUUID } from "crypto";
  * here mock `@/lib/supabase/auth` to a single fixed user (FAKE_USER_ID).
  */
 
-/** The single fixed user every vi.mock("@/lib/supabase/auth", ...) in this test suite resolves to. */
+/** The single fixed user every vi.mock("@/lib/supabase/auth", ...) in this test suite resolves to, unless a test overrides fakeDb.currentUserId (see tests/ownership-isolation.test.ts). */
 export const FAKE_USER_ID = "00000000-0000-0000-0000-000000000001";
 
 type Row = Record<string, unknown>;
-type Filter = { col: string; type: "eq" | "in"; value: unknown };
+type Filter = { col: string; type: "eq" | "in" | "gte" | "lt"; value: unknown };
 
-class FakeQueryBuilder implements PromiseLike<{ data: unknown; error: null }> {
+class FakeQueryBuilder implements PromiseLike<{ data: unknown; error: null; count?: number }> {
   private op: "select" | "insert" | "update" | "delete" = "select";
   private filters: Filter[] = [];
   private insertData?: Row;
   private updateData?: Row;
   private orderCol?: string;
   private orderAsc = true;
+  private countRequested = false;
+  private headOnly = false;
 
   constructor(
     private table: string,
     private db: FakeSupabaseClient
   ) {}
 
-  select(_cols?: string) {
+  select(_cols?: string, opts?: { count?: "exact"; head?: boolean }) {
+    this.countRequested = Boolean(opts?.count);
+    this.headOnly = Boolean(opts?.head);
     return this;
   }
 
@@ -49,6 +54,21 @@ class FakeQueryBuilder implements PromiseLike<{ data: unknown; error: null }> {
 
   in(col: string, value: unknown[]) {
     this.filters.push({ col, type: "in", value });
+    return this;
+  }
+
+  gte(col: string, value: unknown) {
+    this.filters.push({ col, type: "gte", value });
+    return this;
+  }
+
+  lt(col: string, value: unknown) {
+    this.filters.push({ col, type: "lt", value });
+    return this;
+  }
+
+  is(col: string, value: unknown) {
+    this.filters.push({ col, type: "eq", value });
     return this;
   }
 
@@ -86,19 +106,28 @@ class FakeQueryBuilder implements PromiseLike<{ data: unknown; error: null }> {
     return { data: rows[0], error: null };
   }
 
-  then<TResult1 = { data: unknown; error: null }, TResult2 = never>(
-    onfulfilled?: ((value: { data: unknown; error: null }) => TResult1 | PromiseLike<TResult1>) | null,
+  then<TResult1 = { data: unknown; error: null; count?: number }, TResult2 = never>(
+    onfulfilled?:
+      | ((value: { data: unknown; error: null; count?: number }) => TResult1 | PromiseLike<TResult1>)
+      | null,
     onrejected?: ((reason: unknown) => TResult2 | PromiseLike<TResult2>) | null
   ): PromiseLike<TResult1 | TResult2> {
     return this.exec()
-      .then((rows) => ({ data: rows, error: null }))
+      .then((rows) => ({
+        data: this.headOnly ? null : rows,
+        error: null,
+        ...(this.countRequested ? { count: rows.length } : {}),
+      }))
       .then(onfulfilled, onrejected);
   }
 
   private matches(row: Row): boolean {
     return this.filters.every((f) => {
       if (f.type === "eq") return row[f.col] === f.value;
-      return (f.value as unknown[]).includes(row[f.col]);
+      if (f.type === "in") return (f.value as unknown[]).includes(row[f.col]);
+      if (f.type === "gte") return (row[f.col] as string | number) >= (f.value as string | number);
+      if (f.type === "lt") return (row[f.col] as string | number) < (f.value as string | number);
+      return true;
     });
   }
 
@@ -140,44 +169,194 @@ class FakeQueryBuilder implements PromiseLike<{ data: unknown; error: null }> {
   }
 }
 
+/**
+ * Return value of FakeSupabaseClient.rpc(): usable either directly awaited
+ * (matching e.g. `await supabase.rpc("get_usage_total", ...)`) or chained
+ * with `.single()` (matching `await supabase.rpc("create_document_version", ...).single()`),
+ * since real callers in this codebase use both styles.
+ */
+class FakeRpcResult<T> implements PromiseLike<{ data: T; error: { message: string } | null }> {
+  constructor(private result: { data: T; error: { message: string } | null }) {}
+
+  then<TResult1 = { data: T; error: { message: string } | null }, TResult2 = never>(
+    onfulfilled?:
+      | ((value: { data: T; error: { message: string } | null }) => TResult1 | PromiseLike<TResult1>)
+      | null,
+    onrejected?: ((reason: unknown) => TResult2 | PromiseLike<TResult2>) | null
+  ): PromiseLike<TResult1 | TResult2> {
+    return Promise.resolve(this.result).then(onfulfilled, onrejected);
+  }
+
+  single() {
+    return Promise.resolve(this.result);
+  }
+}
+
 export class FakeSupabaseClient {
   tables: Record<string, Row[]> = {};
+  /**
+   * Simulates `auth.uid()` for RPCs whose real Postgres implementation
+   * derives ownership from the session rather than a parameter (e.g.
+   * create_project_with_limit, get_usage_total). Tests that impersonate
+   * multiple users (tests/ownership-isolation.test.ts) must keep this in
+   * sync with whatever their `@/lib/supabase/auth` mock currently returns.
+   */
+  currentUserId: string = FAKE_USER_ID;
 
   from(table: string) {
     return new FakeQueryBuilder(table, this);
   }
 
   rpc(fnName: string, args: Record<string, unknown>) {
-    if (fnName !== "create_document_version") throw new Error(`Unknown rpc: ${fnName}`);
+    if (fnName === "create_document_version") {
+      const documentId = args.p_document_id as string;
+      const versions = this.tables["document_versions"] ?? (this.tables["document_versions"] = []);
+      const existing = versions.filter((v) => v.document_id === documentId);
+      const nextVersion = existing.length
+        ? Math.max(...existing.map((v) => v.version_number as number)) + 1
+        : 1;
 
-    const documentId = args.p_document_id as string;
-    const versions = this.tables["document_versions"] ?? (this.tables["document_versions"] = []);
-    const existing = versions.filter((v) => v.document_id === documentId);
-    const nextVersion = existing.length
-      ? Math.max(...existing.map((v) => v.version_number as number)) + 1
-      : 1;
+      const newVersion: Row = {
+        id: randomUUID(),
+        document_id: documentId,
+        user_id: this.currentUserId,
+        version_number: nextVersion,
+        content: args.p_content,
+        source: args.p_source,
+        instruction: args.p_instruction ?? null,
+        restored_from_version: args.p_restored_from_version ?? null,
+        created_at: new Date().toISOString(),
+      };
+      versions.push(newVersion);
 
-    const newVersion: Row = {
-      id: randomUUID(),
-      document_id: documentId,
-      user_id: FAKE_USER_ID,
-      version_number: nextVersion,
-      content: args.p_content,
-      source: args.p_source,
-      instruction: args.p_instruction ?? null,
-      restored_from_version: args.p_restored_from_version ?? null,
-      created_at: new Date().toISOString(),
-    };
-    versions.push(newVersion);
+      const docs = this.tables["documents"] ?? [];
+      const doc = docs.find((d) => d.id === documentId);
+      if (doc) {
+        doc.content = args.p_content;
+        doc.updated_at = new Date().toISOString();
+      }
 
-    const docs = this.tables["documents"] ?? [];
-    const doc = docs.find((d) => d.id === documentId);
-    if (doc) {
-      doc.content = args.p_content;
-      doc.updated_at = new Date().toISOString();
+      return new FakeRpcResult({ data: newVersion, error: null });
     }
 
-    return { single: () => Promise.resolve({ data: newVersion, error: null }) };
+    if (fnName === "create_project_with_limit") {
+      const projects = this.tables["projects"] ?? (this.tables["projects"] = []);
+      const maxProjects = args.p_max_projects as number;
+      const existingCount = projects.filter((p) => p.user_id === this.currentUserId).length;
+
+      if (existingCount >= maxProjects) {
+        return new FakeRpcResult({ data: null, error: { message: "project_limit_reached" } });
+      }
+
+      const now = new Date().toISOString();
+      const newRow: Row = {
+        id: randomUUID(),
+        user_id: this.currentUserId,
+        name: args.p_name,
+        description: args.p_description ?? null,
+        created_at: now,
+        updated_at: now,
+      };
+      projects.push(newRow);
+      return new FakeRpcResult({ data: newRow, error: null });
+    }
+
+    if (fnName === "get_usage_total") {
+      const eventType = args.p_event_type as string;
+      const periodStart = args.p_period_start as string;
+      const events = this.tables["usage_events"] ?? [];
+      const total = events
+        .filter(
+          (e) =>
+            e.user_id === this.currentUserId &&
+            e.event_type === eventType &&
+            (e.created_at as string) >= periodStart
+        )
+        .reduce((sum, e) => sum + Number(e.quantity), 0);
+      return new FakeRpcResult({ data: total, error: null });
+    }
+
+    if (fnName === "reserve_provider_budget") {
+      const reservations =
+        this.tables["provider_cost_reservations"] ?? (this.tables["provider_cost_reservations"] = []);
+      const events = this.tables["usage_events"] ?? [];
+
+      const completedCost = events
+        .filter((e) => e.user_id === this.currentUserId && e.event_type === "provider_cost")
+        .reduce((sum, e) => sum + Number(e.quantity), 0);
+      const reservedCost = reservations
+        .filter((r) => r.user_id === this.currentUserId && r.status === "reserved")
+        .reduce((sum, r) => sum + Number(r.reserved_cost_usd), 0);
+
+      const budgetLimit = args.p_budget_limit_usd as number;
+      const reservedCostUsd = args.p_reserved_cost_usd as number;
+
+      if (completedCost + reservedCost + reservedCostUsd > budgetLimit) {
+        return new FakeRpcResult({ data: null, error: { message: "trial_budget_exhausted" } });
+      }
+
+      const now = new Date().toISOString();
+      const newRow: Row = {
+        id: randomUUID(),
+        user_id: this.currentUserId,
+        feature: args.p_feature,
+        reserved_cost_usd: reservedCostUsd,
+        actual_cost_usd: null,
+        status: "reserved",
+        created_at: now,
+        completed_at: null,
+      };
+      reservations.push(newRow);
+      return new FakeRpcResult({ data: newRow, error: null });
+    }
+
+    if (fnName === "reconcile_provider_reservation") {
+      const reservations = this.tables["provider_cost_reservations"] ?? [];
+      const reservation = reservations.find(
+        (r) => r.id === args.p_reservation_id && r.user_id === this.currentUserId && r.status === "reserved"
+      );
+      if (!reservation) {
+        return new FakeRpcResult({ data: null, error: { message: "reservation_not_found" } });
+      }
+
+      reservation.status = "completed";
+      reservation.actual_cost_usd = args.p_actual_cost_usd;
+      reservation.completed_at = new Date().toISOString();
+
+      const events = this.tables["usage_events"] ?? (this.tables["usage_events"] = []);
+      events.push({
+        id: randomUUID(),
+        user_id: this.currentUserId,
+        event_type: "provider_cost",
+        quantity: args.p_actual_cost_usd,
+        metadata: { ...(args.p_metadata as object), feature: reservation.feature },
+        created_at: new Date().toISOString(),
+      });
+
+      return new FakeRpcResult({ data: reservation, error: null });
+    }
+
+    if (fnName === "release_provider_reservation") {
+      const reservations = this.tables["provider_cost_reservations"] ?? [];
+      const reservation = reservations.find(
+        (r) => r.id === args.p_reservation_id && r.user_id === this.currentUserId && r.status === "reserved"
+      );
+      if (reservation) {
+        reservation.status = "released";
+        reservation.completed_at = new Date().toISOString();
+      }
+      return new FakeRpcResult({ data: null, error: null });
+    }
+
+    if (fnName === "get_provider_cost_total") {
+      const events = this.tables["usage_events"] ?? [];
+      const total = events
+        .filter((e) => e.user_id === this.currentUserId && e.event_type === "provider_cost")
+        .reduce((sum, e) => sum + Number(e.quantity), 0);
+      return new FakeRpcResult({ data: total, error: null });
+    }
+
+    throw new Error(`Unknown rpc: ${fnName}`);
   }
 
   cascadeDelete(table: string, deletedRows: Row[]) {

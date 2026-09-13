@@ -1,5 +1,6 @@
 import "server-only";
-import { generateText, AiGenerationError } from "@/lib/ai/generateText";
+import { AiGenerationError } from "@/lib/ai/generateText";
+import { guardedGenerateText } from "@/lib/ai/guarded";
 import {
   composeDocumentEditPrompt,
   composeDocumentGenerationPrompt,
@@ -21,6 +22,13 @@ export { AiGenerationError };
  * on purpose: one repair attempt, then accept whatever coverage results
  * rather than looping. A repair failure (e.g. the AI service errors) falls
  * back to the original content instead of blocking generation/editing.
+ *
+ * `repairFeature` distinguishes the generation-repair pass from the
+ * edit-repair pass purely for provider-cost bookkeeping (see
+ * lib/entitlements/cost.ts's FEATURE_COST_GUARDS) — both are automatic,
+ * internal OpenAI calls: they never count as a second user-facing AI
+ * Action, but their real cost always counts against the provider-cost
+ * budget (see lib/ai/guarded.ts's module doc for why that split matters).
  */
 async function ensureKeywordCoverage(params: {
   content: string;
@@ -28,6 +36,7 @@ async function ensureKeywordCoverage(params: {
   presetSnapshot: PresetSnapshot;
   context: ProjectContext;
   seoKeywords: SeoKeywordConfig;
+  repairFeature: "document_generation_repair" | "document_edit_repair";
 }): Promise<string> {
   const missingKeywords = getMissingKeywords(params.content, params.seoKeywords);
   if (missingKeywords.length === 0) return params.content;
@@ -42,7 +51,8 @@ async function ensureKeywordCoverage(params: {
       seoKeywords: params.seoKeywords,
       missingKeywords,
     });
-    repaired = await generateText({ system, prompt, temperature: 0.4 });
+    const result = await guardedGenerateText(params.repairFeature, { system, prompt, temperature: 0.4 });
+    repaired = result.text;
   } catch (err) {
     console.error("Keyword repair pass failed; keeping the original content.", err);
     return params.content;
@@ -56,6 +66,16 @@ async function ensureKeywordCoverage(params: {
   return repaired;
 }
 
+/**
+ * Both exported functions below intentionally return the plain generated
+ * string, not token usage — a document generation/edit is 1-2 generateText
+ * calls (a main pass, plus an optional keyword-repair pass), and reporting
+ * precise combined token counts isn't worth the complexity given usage
+ * limits are action-counted, not token-counted (see
+ * lib/entitlements/usage.ts). Each call still records its own real
+ * provider cost independently via lib/ai/guarded.ts — see
+ * ensureKeywordCoverage's doc comment.
+ */
 export async function generateDocumentContent(input: {
   context: ProjectContext;
   documentType: DocumentType;
@@ -64,7 +84,7 @@ export async function generateDocumentContent(input: {
   seoKeywords: SeoKeywordConfig | null;
 }): Promise<string> {
   const { system, prompt } = composeDocumentGenerationPrompt(input);
-  const content = await generateText({ system, prompt, temperature: 0.7 });
+  const { text: content } = await guardedGenerateText("document_generation", { system, prompt, temperature: 0.7 });
 
   if (!input.seoKeywords) return content;
 
@@ -74,6 +94,7 @@ export async function generateDocumentContent(input: {
     presetSnapshot: input.presetSnapshot,
     context: input.context,
     seoKeywords: input.seoKeywords,
+    repairFeature: "document_generation_repair",
   });
 }
 
@@ -87,7 +108,7 @@ export async function generateDocumentEdit(input: {
   seoKeywords: SeoKeywordConfig | null;
 }): Promise<string> {
   const { system, prompt } = composeDocumentEditPrompt(input);
-  const content = await generateText({ system, prompt, temperature: 0.6 });
+  const { text: content } = await guardedGenerateText("document_edit", { system, prompt, temperature: 0.6 });
 
   if (!input.seoKeywords) return content;
 
@@ -97,5 +118,6 @@ export async function generateDocumentEdit(input: {
     presetSnapshot: input.presetSnapshot,
     context: input.context,
     seoKeywords: input.seoKeywords,
+    repairFeature: "document_edit_repair",
   });
 }

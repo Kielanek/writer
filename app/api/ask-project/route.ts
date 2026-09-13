@@ -2,7 +2,9 @@ import { NextRequest, NextResponse } from "next/server";
 import { createChatMessage, listChatMessages } from "@/lib/db/chat";
 import { buildProjectContext, ProjectContextError, ProjectNotFoundError } from "@/lib/context/buildProjectContext";
 import { buildAskProjectPrompt } from "@/lib/ai/prompts/askProject";
-import { generateText, AiGenerationError } from "@/lib/ai/generateText";
+import { AiGenerationError } from "@/lib/ai/generateText";
+import { guardedGenerateText } from "@/lib/ai/guarded";
+import { checkAiActionLimit, recordUsageEvent } from "@/lib/entitlements/usage";
 import { chatMessageSchema } from "@/lib/validation/schemas";
 import { ApiError, withApiErrorHandling } from "@/lib/utils/api";
 
@@ -23,13 +25,13 @@ export const POST = withApiErrorHandling(async (request: NextRequest) => {
     throw err;
   }
 
-  const history = await listChatMessages(input.projectId);
+  // Checked before any side effect (including saving the user's own
+  // message) — a blocked action should leave no partial chat history. The
+  // provider-cost budget (guardedGenerateText, below) is the other half of
+  // that same guarantee — both checks happen before anything is written.
+  await checkAiActionLimit();
 
-  const userMessage = await createChatMessage({
-    projectId: input.projectId,
-    role: "user",
-    content: input.message,
-  });
+  const history = await listChatMessages(input.projectId);
 
   let answer: string;
   try {
@@ -38,16 +40,33 @@ export const POST = withApiErrorHandling(async (request: NextRequest) => {
       history,
       question: input.message,
     });
-    answer = await generateText({ system, prompt, temperature: 0.5 });
+    const result = await guardedGenerateText("ask_project", { system, prompt, temperature: 0.5 });
+    answer = result.text;
   } catch (err) {
     if (err instanceof AiGenerationError) throw new ApiError(502, err.message);
     throw err;
   }
 
+  // Only written once generation has actually succeeded — an early failure
+  // (limit, budget, or provider error) now leaves no orphaned user message
+  // with no answer.
+  const userMessage = await createChatMessage({
+    projectId: input.projectId,
+    role: "user",
+    content: input.message,
+  });
   const assistantMessage = await createChatMessage({
     projectId: input.projectId,
     role: "assistant",
     content: answer,
+  });
+
+  // Real provider cost for this call was already recorded by
+  // guardedGenerateText as its own provider_cost event.
+  await recordUsageEvent({
+    eventType: "ai_action",
+    quantity: 1,
+    metadata: { feature: "ask_project" },
   });
 
   return NextResponse.json({ userMessage, assistantMessage }, { status: 201 });

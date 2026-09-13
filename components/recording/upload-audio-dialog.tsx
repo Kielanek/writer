@@ -11,6 +11,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
+import { resolveApiErrorMessage } from "@/lib/utils/apiError";
 
 const MAX_AUDIO_FILE_BYTES = 25 * 1024 * 1024;
 const ACCEPTED_EXTENSIONS = ".mp3,.m4a,.wav,.webm,.ogg,audio/*";
@@ -52,7 +53,7 @@ export function UploadAudioDialog({ projectId }: { projectId: string }) {
 
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
-        throw new Error(data.error || "Failed to process the audio file.");
+        throw new Error(resolveApiErrorMessage(data, "Failed to process the audio file."));
       }
 
       toast.success("Note created");

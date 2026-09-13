@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { SeoKeywordInput } from "@/components/documents/seo-keyword-input";
+import { resolveApiErrorMessage } from "@/lib/utils/apiError";
 import { CREATABLE_DOCUMENT_TYPES, DOCUMENT_TYPE_LABELS } from "@/types";
 import type { CreatableDocumentType, DocumentType } from "@/types";
 import type { BuiltInPreset, CustomPresetRecord } from "@/lib/writing-engine/types";
@@ -93,7 +94,7 @@ export function CreateDocumentForm({ projectId }: { projectId: string }) {
 
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
-        throw new Error(data.error || "Failed to generate the document.");
+        throw new Error(resolveApiErrorMessage(data, "Failed to generate the document."));
       }
 
       const { document } = await res.json();

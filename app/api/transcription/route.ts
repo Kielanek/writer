@@ -1,8 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getProject } from "@/lib/db/projects";
 import { createNote } from "@/lib/db/notes";
-import { transcribeAudio, TranscriptionError } from "@/lib/ai/transcribeAudio";
+import { TranscriptionError } from "@/lib/ai/transcribeAudio";
+import { guardedTranscribeAudio } from "@/lib/ai/guarded";
 import { generateNoteMetadata } from "@/lib/ai/noteMetadata";
+import { checkTranscriptionAllowance, recordUsageEvent } from "@/lib/entitlements/usage";
 import {
   ALLOWED_AUDIO_MIME_TYPES,
   MAX_AUDIO_FILE_BYTES,
@@ -49,14 +51,41 @@ export const POST = withApiErrorHandling(async (request: NextRequest) => {
   const project = await getProject(input.projectId);
   if (!project) throw new ApiError(404, "Project not found.");
 
+  // Blocks only if the user is already at/over their limit — the file's
+  // own duration isn't known until Whisper has transcribed it, so this
+  // can't reserve the exact amount up front (see
+  // checkTranscriptionAllowance()'s doc comment for why that's an accepted
+  // MVP limitation rather than a fragile duration estimate).
+  await checkTranscriptionAllowance();
+
   let transcript: string;
+  let durationSeconds: number;
   try {
-    transcript = await transcribeAudio(audio);
+    // guardedTranscribeAudio reserves a conservative provider-cost estimate
+    // (from file size — see lib/entitlements/cost.ts) before ever sending
+    // the file to OpenAI, and records the REAL cost (from Whisper's own
+    // reported duration) as its own provider_cost event on success.
+    const result = await guardedTranscribeAudio(audio);
+    transcript = result.text;
+    durationSeconds = result.durationSeconds;
   } catch (err) {
     if (err instanceof TranscriptionError) {
       throw new ApiError(422, err.message);
     }
     throw err;
+  }
+
+  // Recorded from Whisper's own measurement, never the client-supplied
+  // durationSeconds (that value is kept only for the note's display field
+  // below) — usage accounting must never trust a client-reported quantity.
+  // This is the user-facing product counter (transcription minutes); real
+  // provider cost was already recorded above.
+  if (durationSeconds > 0) {
+    await recordUsageEvent({
+      eventType: "transcription_seconds",
+      quantity: durationSeconds,
+      metadata: { feature: "transcription" },
+    });
   }
 
   const metadata = await generateNoteMetadata(transcript);

@@ -33,27 +33,37 @@ import { getCustomPreset } from "@/lib/db/writingPresets";
 const USER_A = "aaaaaaaa-0000-0000-0000-000000000001";
 const USER_B = "bbbbbbbb-0000-0000-0000-000000000002";
 
+/** Keeps the requireUser() mock and the fake's own auth.uid() stand-in (used by RPCs like create_project_with_limit) in sync. */
+function setCurrentUser(id: string) {
+  currentUserId = id;
+  fakeDb.currentUserId = id;
+}
+
 beforeEach(() => {
   Object.keys(fakeDb.tables).forEach((key) => delete fakeDb.tables[key]);
+  // Every user has the default "development" plan's maxProjects (50) —
+  // profiles is empty in these tests, and getUserPlan() falls back to the
+  // default plan when no row exists, so this is just documenting that
+  // assumption rather than something these tests need to seed.
 });
 
 describe("Projects: cross-user isolation", () => {
   it("User B cannot read, update, or delete User A's Project by UUID", async () => {
-    currentUserId = USER_A;
+    setCurrentUser(USER_A);
     const project = await createProject({ name: "A's project", description: null });
 
-    currentUserId = USER_B;
+    setCurrentUser(USER_B);
     expect(await getProject(project.id)).toBeNull();
     await expect(updateProject(project.id, { name: "Hijacked" })).rejects.toBeTruthy();
     await expect(deleteProject(project.id)).resolves.toBeUndefined(); // no-op: filter matches 0 rows
 
-    currentUserId = USER_A;
+    setCurrentUser(USER_A);
     const stillThere = await getProject(project.id);
     expect(stillThere?.name).toBe("A's project");
   });
 
   it("a created Project is always owned by the authenticated caller, never a client-supplied id", async () => {
-    currentUserId = USER_A;
+    setCurrentUser(USER_A);
     const project = await createProject({ name: "Mine", description: null });
     expect(project.user_id).toBe(USER_A);
   });
@@ -61,7 +71,7 @@ describe("Projects: cross-user isolation", () => {
 
 describe("Notes: cross-user isolation", () => {
   it("User B cannot read User A's Note by UUID", async () => {
-    currentUserId = USER_A;
+    setCurrentUser(USER_A);
     const project = await createProject({ name: "A's project", description: null });
     const note = await createNote({
       projectId: project.id,
@@ -71,14 +81,14 @@ describe("Notes: cross-user isolation", () => {
       content: "SECRET_NOTE_CONTENT",
     });
 
-    currentUserId = USER_B;
+    setCurrentUser(USER_B);
     expect(await getNote(note.id)).toBeNull();
   });
 });
 
 describe("Documents and versions: cross-user isolation", () => {
   it("User B cannot read User A's Document or its versions by UUID", async () => {
-    currentUserId = USER_A;
+    setCurrentUser(USER_A);
     const project = await createProject({ name: "A's project", description: null });
     const document = await createDocument({
       projectId: project.id,
@@ -108,18 +118,18 @@ describe("Documents and versions: cross-user isolation", () => {
       },
     ];
 
-    currentUserId = USER_B;
+    setCurrentUser(USER_B);
     expect(await getDocument(document.id)).toBeNull();
     expect(await listDocumentVersions(document.id)).toEqual([]);
 
-    currentUserId = USER_A;
+    setCurrentUser(USER_A);
     expect(await listDocumentVersions(document.id)).toHaveLength(1);
   });
 });
 
 describe("Writing Presets: cross-user isolation", () => {
   it("User B cannot read or resolve User A's custom Preset by UUID", async () => {
-    currentUserId = USER_A;
+    setCurrentUser(USER_A);
     const preset = await createPreset({
       documentType: "linkedin_post",
       name: "A's private style",
@@ -128,7 +138,7 @@ describe("Writing Presets: cross-user isolation", () => {
       avoidRules: [],
     });
 
-    currentUserId = USER_B;
+    setCurrentUser(USER_B);
     expect(await getCustomPreset(preset.id)).toBeNull();
   });
 });

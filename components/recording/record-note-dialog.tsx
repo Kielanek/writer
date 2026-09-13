@@ -11,6 +11,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
+import { resolveApiErrorMessage } from "@/lib/utils/apiError";
 
 type RecordingState =
   | "idle"
@@ -157,7 +158,7 @@ export function RecordNoteDialog({ projectId }: { projectId: string }) {
 
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
-        throw new Error(data.error || "Failed to save the recording.");
+        throw new Error(resolveApiErrorMessage(data, "Failed to save the recording."));
       }
 
       toast.success("Note created");

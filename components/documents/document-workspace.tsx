@@ -31,6 +31,7 @@ import { formatRelativeTime } from "@/lib/utils/format";
 import { resolveDocumentPresetSnapshot } from "@/lib/writing-engine/snapshot";
 import { resolveDocumentSeoConfig } from "@/lib/writing-engine/seoKeywords";
 import { normalizeLinkedInText } from "@/lib/utils/normalizeLinkedInText";
+import { resolveApiErrorMessage } from "@/lib/utils/apiError";
 import { DOCUMENT_TYPE_LABELS } from "@/types";
 import type { Document, DocumentVersion } from "@/types";
 
@@ -104,7 +105,7 @@ export function DocumentWorkspace({
     });
     if (!res.ok) {
       const data = await res.json().catch(() => ({}));
-      throw new Error(data.error || "Failed to apply the AI edit.");
+      throw new Error(resolveApiErrorMessage(data, "Failed to apply the AI edit."));
     }
     const { version } = await res.json();
     setContent(version.content);

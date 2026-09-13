@@ -1,6 +1,7 @@
 import "server-only";
 import { z } from "zod";
-import { generateText, AiGenerationError } from "@/lib/ai/generateText";
+import { AiGenerationError } from "@/lib/ai/generateText";
+import { guardedGenerateText } from "@/lib/ai/guarded";
 import { buildAnalyzeExamplesPrompt } from "@/lib/ai/prompts/analyzeWritingExamples";
 import type { DocumentType } from "@/types";
 
@@ -30,10 +31,10 @@ export async function analyzeWritingExamples(input: {
 }): Promise<ExampleAnalysisResult> {
   const { system, prompt } = buildAnalyzeExamplesPrompt(input);
 
-  const raw = await generateText({ system, prompt, temperature: 0.3 });
+  const { text } = await guardedGenerateText("analyze_examples", { system, prompt, temperature: 0.3 });
 
   try {
-    return parseAnalysisResponse(raw);
+    return parseAnalysisResponse(text);
   } catch {
     throw new AiGenerationError("Could not analyze the examples. Please try again.");
   }

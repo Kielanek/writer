@@ -1,6 +1,9 @@
 import "server-only";
 import { getSupabaseServerClient } from "@/lib/db/client";
 import { requireUser } from "@/lib/supabase/auth";
+import { getUserPlan } from "@/lib/entitlements/profile";
+import { getPlanLimits } from "@/lib/entitlements/plans";
+import { UsageLimitError } from "@/lib/entitlements/errors";
 import type { Project, ProjectWithCounts } from "@/types";
 
 export async function listProjectsWithCounts(): Promise<ProjectWithCounts[]> {
@@ -59,21 +62,38 @@ export async function getProject(projectId: string): Promise<Project | null> {
   return data;
 }
 
+/**
+ * Creates a Project, enforcing the plan's maxProjects limit atomically via
+ * the create_project_with_limit() Postgres function (see
+ * supabase/migrations/0007_usage_limits.sql) — a plain INSERT is no longer
+ * possible here since `authenticated` has no INSERT grant on `projects` at
+ * all, closing off any path that would let a client bypass the limit by
+ * calling the REST API directly instead of going through this function.
+ */
 export async function createProject(input: {
   name: string;
   description: string | null;
 }): Promise<Project> {
   const supabase = await getSupabaseServerClient();
-  const user = await requireUser();
+  await requireUser();
+  const plan = await getUserPlan();
+  const maxProjects = getPlanLimits(plan).maxProjects;
 
   const { data, error } = await supabase
-    .from("projects")
-    .insert({ name: input.name, description: input.description, user_id: user.id })
-    .select("*")
+    .rpc("create_project_with_limit", {
+      p_name: input.name,
+      p_description: input.description,
+      p_max_projects: maxProjects,
+    })
     .single();
 
-  if (error) throw error;
-  return data;
+  if (error) {
+    if (error.message?.includes("project_limit_reached")) {
+      throw new UsageLimitError({ resource: "projects", used: maxProjects, limit: maxProjects });
+    }
+    throw error;
+  }
+  return data as Project;
 }
 
 export async function updateProject(

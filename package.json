@@ -8,7 +8,8 @@
     "start": "next start",
     "lint": "eslint",
     "test": "vitest run",
-    "claim-legacy-data": "tsx scripts/claim-legacy-data.ts"
+    "claim-legacy-data": "tsx scripts/claim-legacy-data.ts",
+    "set-user-plan": "tsx scripts/set-user-plan.ts"
   },
   "dependencies": {
     "@supabase/ssr": "^0.12.7",
