@@ -22,6 +22,7 @@ export type ChatRole = "user" | "assistant";
 
 export interface Project {
   id: string;
+  user_id: string;
   name: string;
   description: string | null;
   created_at: string;
@@ -36,6 +37,7 @@ export interface ProjectWithCounts extends Project {
 export interface Note {
   id: string;
   project_id: string;
+  user_id: string;
   type: NoteType;
   title: string;
   description: string;
@@ -48,6 +50,7 @@ export interface Note {
 export interface Document {
   id: string;
   project_id: string;
+  user_id: string;
   type: DocumentType;
   title: string;
   creation_instructions: string;
@@ -72,6 +75,7 @@ export interface Document {
 export interface DocumentVersion {
   id: string;
   document_id: string;
+  user_id: string;
   version_number: number;
   content: string;
   source: DocumentVersionSource;
@@ -83,6 +87,7 @@ export interface DocumentVersion {
 export interface ProjectChatMessage {
   id: string;
   project_id: string;
+  user_id: string;
   role: ChatRole;
   content: string;
   created_at: string;

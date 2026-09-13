@@ -13,6 +13,7 @@ describe("wizard prefill from an existing custom preset (edit flow)", () => {
     const settings = { ...defaultPresetSettings("article"), purpose: "Explain things clearly." };
     const preset: CustomPresetRecord = {
       id: "p1",
+      user_id: "u1",
       document_type: "article",
       name: "My Article Style",
       description: "For blog posts",
@@ -35,6 +36,7 @@ describe("wizard prefill from an existing custom preset (edit flow)", () => {
   it("falls back to default settings when the preset predates the questionnaire (settings is null)", () => {
     const preset: CustomPresetRecord = {
       id: "p2",
+      user_id: "u1",
       document_type: "summary",
       name: "Old Style Preset",
       description: null,
@@ -77,6 +79,7 @@ describe("Duplicate & Customize prefill", () => {
     const settings = { ...defaultPresetSettings("newsletter"), audience: "Existing subscribers." };
     const preset: CustomPresetRecord = {
       id: "p3",
+      user_id: "u1",
       document_type: "newsletter",
       name: "My Newsletter Voice",
       description: null,

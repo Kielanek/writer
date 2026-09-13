@@ -1,8 +1,13 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { fakeDb } from "./fakeSupabase";
+import { fakeDb, FAKE_USER_ID } from "./fakeSupabase";
 
 vi.mock("@/lib/db/client", () => ({
   getSupabaseServerClient: () => fakeDb,
+}));
+
+vi.mock("@/lib/supabase/auth", () => ({
+  requireUser: async () => ({ id: FAKE_USER_ID }),
+  getAuthedUser: async () => ({ id: FAKE_USER_ID }),
 }));
 
 import { createDocumentVersion, listDocumentVersions } from "@/lib/db/documents";
@@ -15,6 +20,7 @@ beforeEach(() => {
     {
       id: DOCUMENT_ID,
       project_id: "44444444-4444-4444-4444-444444444444",
+      user_id: FAKE_USER_ID,
       type: "summary",
       title: "Summary",
       creation_instructions: "",

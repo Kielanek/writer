@@ -1,8 +1,13 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { fakeDb } from "./fakeSupabase";
+import { fakeDb, FAKE_USER_ID } from "./fakeSupabase";
 
 vi.mock("@/lib/db/client", () => ({
   getSupabaseServerClient: () => fakeDb,
+}));
+
+vi.mock("@/lib/supabase/auth", () => ({
+  requireUser: async () => ({ id: FAKE_USER_ID }),
+  getAuthedUser: async () => ({ id: FAKE_USER_ID }),
 }));
 
 import { buildProjectContext } from "@/lib/context/buildProjectContext";
@@ -19,6 +24,7 @@ beforeEach(() => {
   fakeDb.tables["projects"] = [
     {
       id: PROJECT_A,
+      user_id: FAKE_USER_ID,
       name: "Project A",
       description: "Project A description",
       created_at: "2026-01-01T00:00:00Z",
@@ -26,6 +32,7 @@ beforeEach(() => {
     },
     {
       id: PROJECT_B,
+      user_id: FAKE_USER_ID,
       name: "Project B",
       description: "Project B description",
       created_at: "2026-01-01T00:00:00Z",
@@ -36,6 +43,7 @@ beforeEach(() => {
     {
       id: "a-note-1",
       project_id: PROJECT_A,
+      user_id: FAKE_USER_ID,
       type: "text",
       title: "A note",
       description: "",
@@ -47,6 +55,7 @@ beforeEach(() => {
     {
       id: "b-note-1",
       project_id: PROJECT_B,
+      user_id: FAKE_USER_ID,
       type: "text",
       title: "B note",
       description: "",

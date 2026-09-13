@@ -1,10 +1,15 @@
 import { readFileSync } from "fs";
 import { join } from "path";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { fakeDb } from "./fakeSupabase";
+import { fakeDb, FAKE_USER_ID } from "./fakeSupabase";
 
 vi.mock("@/lib/db/client", () => ({
   getSupabaseServerClient: () => fakeDb,
+}));
+
+vi.mock("@/lib/supabase/auth", () => ({
+  requireUser: async () => ({ id: FAKE_USER_ID }),
+  getAuthedUser: async () => ({ id: FAKE_USER_ID }),
 }));
 
 import { deleteProject } from "@/lib/db/projects";
@@ -43,7 +48,14 @@ describe("deleting a project cascades in practice", () => {
   beforeEach(() => {
     Object.keys(fakeDb.tables).forEach((key) => delete fakeDb.tables[key]);
     fakeDb.tables["projects"] = [
-      { id: PROJECT_ID, name: "To delete", description: null, created_at: "x", updated_at: "x" },
+      {
+        id: PROJECT_ID,
+        user_id: FAKE_USER_ID,
+        name: "To delete",
+        description: null,
+        created_at: "x",
+        updated_at: "x",
+      },
     ];
     fakeDb.tables["notes"] = [
       { id: "n1", project_id: PROJECT_ID, type: "text", title: "", description: "", content: "" },

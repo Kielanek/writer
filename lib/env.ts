@@ -13,7 +13,23 @@ function required(name: string): string {
  */
 export const env = {
   supabaseUrl: () => required("NEXT_PUBLIC_SUPABASE_URL"),
-  supabaseServiceRoleKey: () => required("SUPABASE_SERVICE_ROLE_KEY"),
+  supabasePublishableKey: () => required("NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY"),
+
+  /**
+   * Server-only. Was previously named SUPABASE_SERVICE_ROLE_KEY — both are
+   * accepted so existing deployments keep working while credentials are
+   * migrated to Supabase's newer secret-key naming. Never expose this value
+   * to the browser, and never use it for ordinary user data access (see
+   * lib/supabase/admin.ts).
+   */
+  supabaseSecretKey: () => {
+    const value = process.env.SUPABASE_SECRET_KEY || process.env.SUPABASE_SERVICE_ROLE_KEY;
+    if (!value) {
+      throw new Error("Missing required environment variable: SUPABASE_SECRET_KEY");
+    }
+    return value;
+  },
+
   openaiApiKey: () => required("OPENAI_API_KEY"),
 
   /** Speech-to-text only. Kept independent from the text model below. */

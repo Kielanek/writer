@@ -11,6 +11,9 @@ export const GET = withApiErrorHandling(async (_request: NextRequest, { params }
   const { documentId } = await params;
   uuidSchema.parse(documentId);
 
+  const document = await getDocument(documentId);
+  if (!document) throw new ApiError(404, "Document not found.");
+
   const versions = await listDocumentVersions(documentId);
   return NextResponse.json({ versions });
 });

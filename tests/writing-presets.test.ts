@@ -1,8 +1,13 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { fakeDb } from "./fakeSupabase";
+import { fakeDb, FAKE_USER_ID } from "./fakeSupabase";
 
 vi.mock("@/lib/db/client", () => ({
   getSupabaseServerClient: () => fakeDb,
+}));
+
+vi.mock("@/lib/supabase/auth", () => ({
+  requireUser: async () => ({ id: FAKE_USER_ID }),
+  getAuthedUser: async () => ({ id: FAKE_USER_ID }),
 }));
 
 import { getBuiltInPreset, getBuiltInPresets } from "@/lib/writing-engine/registry";

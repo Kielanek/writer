@@ -1,13 +1,16 @@
 import "server-only";
 import { getSupabaseServerClient } from "@/lib/db/client";
+import { requireUser } from "@/lib/supabase/auth";
 import type { Project, ProjectWithCounts } from "@/types";
 
 export async function listProjectsWithCounts(): Promise<ProjectWithCounts[]> {
-  const supabase = getSupabaseServerClient();
+  const supabase = await getSupabaseServerClient();
+  const user = await requireUser();
 
   const { data: projects, error } = await supabase
     .from("projects")
     .select("*")
+    .eq("user_id", user.id)
     .order("updated_at", { ascending: false });
 
   if (error) throw error;
@@ -17,8 +20,8 @@ export async function listProjectsWithCounts(): Promise<ProjectWithCounts[]> {
 
   const [{ data: notes, error: notesError }, { data: documents, error: docsError }] =
     await Promise.all([
-      supabase.from("notes").select("id, project_id").in("project_id", projectIds),
-      supabase.from("documents").select("id, project_id").in("project_id", projectIds),
+      supabase.from("notes").select("id, project_id").eq("user_id", user.id).in("project_id", projectIds),
+      supabase.from("documents").select("id, project_id").eq("user_id", user.id).in("project_id", projectIds),
     ]);
 
   if (notesError) throw notesError;
@@ -42,11 +45,14 @@ export async function listProjectsWithCounts(): Promise<ProjectWithCounts[]> {
 }
 
 export async function getProject(projectId: string): Promise<Project | null> {
-  const supabase = getSupabaseServerClient();
+  const supabase = await getSupabaseServerClient();
+  const user = await requireUser();
+
   const { data, error } = await supabase
     .from("projects")
     .select("*")
     .eq("id", projectId)
+    .eq("user_id", user.id)
     .maybeSingle();
 
   if (error) throw error;
@@ -57,10 +63,12 @@ export async function createProject(input: {
   name: string;
   description: string | null;
 }): Promise<Project> {
-  const supabase = getSupabaseServerClient();
+  const supabase = await getSupabaseServerClient();
+  const user = await requireUser();
+
   const { data, error } = await supabase
     .from("projects")
-    .insert({ name: input.name, description: input.description })
+    .insert({ name: input.name, description: input.description, user_id: user.id })
     .select("*")
     .single();
 
@@ -72,11 +80,14 @@ export async function updateProject(
   projectId: string,
   input: { name?: string; description?: string | null }
 ): Promise<Project> {
-  const supabase = getSupabaseServerClient();
+  const supabase = await getSupabaseServerClient();
+  const user = await requireUser();
+
   const { data, error } = await supabase
     .from("projects")
     .update(input)
     .eq("id", projectId)
+    .eq("user_id", user.id)
     .select("*")
     .single();
 
@@ -85,7 +96,14 @@ export async function updateProject(
 }
 
 export async function deleteProject(projectId: string): Promise<void> {
-  const supabase = getSupabaseServerClient();
-  const { error } = await supabase.from("projects").delete().eq("id", projectId);
+  const supabase = await getSupabaseServerClient();
+  const user = await requireUser();
+
+  const { error } = await supabase
+    .from("projects")
+    .delete()
+    .eq("id", projectId)
+    .eq("user_id", user.id);
+
   if (error) throw error;
 }

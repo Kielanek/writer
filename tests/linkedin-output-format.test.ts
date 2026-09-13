@@ -6,7 +6,7 @@ import { normalizeLinkedInText } from "@/lib/utils/normalizeLinkedInText";
 import type { ProjectContext } from "@/lib/context/buildProjectContext";
 
 const fakeContext: ProjectContext = {
-  project: { id: "p1", name: "Test Project", description: null, created_at: "", updated_at: "" },
+  project: { id: "p1", user_id: "u1", name: "Test Project", description: null, created_at: "", updated_at: "" },
   notes: [],
   notesText: "Some note content.",
   estimatedTokens: 10,

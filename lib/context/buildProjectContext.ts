@@ -5,6 +5,9 @@ import type { Note, Project } from "@/types";
 
 export class ProjectContextError extends Error {}
 
+/** Thrown when the Project doesn't exist OR doesn't belong to the caller — the two are indistinguishable on purpose. */
+export class ProjectNotFoundError extends ProjectContextError {}
+
 /**
  * A very rough token estimate (chars / 4). Good enough for a soft budget
  * check — not meant to be exact.
@@ -45,7 +48,7 @@ export interface ProjectContext {
 export async function buildProjectContext(projectId: string): Promise<ProjectContext> {
   const project = await getProject(projectId);
   if (!project) {
-    throw new ProjectContextError("Project not found.");
+    throw new ProjectNotFoundError("Project not found.");
   }
 
   const notes = await listNotesForProject(projectId);

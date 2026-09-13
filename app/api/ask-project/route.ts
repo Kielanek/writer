@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createChatMessage, listChatMessages } from "@/lib/db/chat";
-import { buildProjectContext, ProjectContextError } from "@/lib/context/buildProjectContext";
+import { buildProjectContext, ProjectContextError, ProjectNotFoundError } from "@/lib/context/buildProjectContext";
 import { buildAskProjectPrompt } from "@/lib/ai/prompts/askProject";
 import { generateText, AiGenerationError } from "@/lib/ai/generateText";
 import { chatMessageSchema } from "@/lib/validation/schemas";
@@ -18,6 +18,7 @@ export const POST = withApiErrorHandling(async (request: NextRequest) => {
   try {
     context = await buildProjectContext(input.projectId);
   } catch (err) {
+    if (err instanceof ProjectNotFoundError) throw new ApiError(404, err.message);
     if (err instanceof ProjectContextError) throw new ApiError(422, err.message);
     throw err;
   }

@@ -1,13 +1,16 @@
 import "server-only";
-import { createClient } from "@supabase/supabase-js";
-import { env } from "@/lib/env";
+import { createClient } from "@/lib/supabase/server";
 
 /**
- * Server-only Supabase client using the service role key.
- * MUST NOT be imported from any client component or route exposed to the browser.
+ * Session-aware Supabase client for ordinary application data access.
+ * Respects Row Level Security — every query made with this client is
+ * scoped to whoever is authenticated on the current request.
+ *
+ * This must NOT be the secret/admin client. Normal Project/Note/Document/
+ * Preset/Version/Chat CRUD must always go through this so RLS is an actual
+ * security boundary, not decorative SQL. See lib/supabase/admin.ts for the
+ * (rare, explicitly-invoked) privileged alternative.
  */
-export function getSupabaseServerClient() {
-  return createClient(env.supabaseUrl(), env.supabaseServiceRoleKey(), {
-    auth: { persistSession: false },
-  });
+export async function getSupabaseServerClient() {
+  return createClient();
 }

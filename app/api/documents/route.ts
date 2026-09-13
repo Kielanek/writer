@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createDocument, createDocumentVersion } from "@/lib/db/documents";
-import { buildProjectContext, ProjectContextError } from "@/lib/context/buildProjectContext";
+import { buildProjectContext, ProjectContextError, ProjectNotFoundError } from "@/lib/context/buildProjectContext";
 import { generateDocumentContent, AiGenerationError } from "@/lib/ai/documentGeneration";
 import { resolvePreset } from "@/lib/writing-engine/customPresets/service";
 import { buildPresetSnapshot } from "@/lib/writing-engine/snapshot";
@@ -22,6 +22,7 @@ export const POST = withApiErrorHandling(async (request: NextRequest) => {
   try {
     context = await buildProjectContext(input.projectId);
   } catch (err) {
+    if (err instanceof ProjectNotFoundError) throw new ApiError(404, err.message);
     if (err instanceof ProjectContextError) throw new ApiError(422, err.message);
     throw err;
   }

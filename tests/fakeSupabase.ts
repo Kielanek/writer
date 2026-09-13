@@ -9,7 +9,18 @@ import { randomUUID } from "crypto";
  * mirror supabase/migrations/0001_init.sql, but the migration itself is the
  * source of truth — see tests/schema-cascade.test.ts for a check that the
  * SQL actually declares those cascades.
+ *
+ * Real Postgres RLS enforcement is NOT emulated here — this fake only
+ * understands plain column filters. Cross-user isolation via the
+ * application-layer `.eq("user_id", ...)` filtering is verified in
+ * tests/ownership-isolation.test.ts (using this fake with a switchable
+ * mocked user); the actual RLS policies are verified separately, directly
+ * against Postgres, by supabase/tests/rls_verification.sql. Most tests
+ * here mock `@/lib/supabase/auth` to a single fixed user (FAKE_USER_ID).
  */
+
+/** The single fixed user every vi.mock("@/lib/supabase/auth", ...) in this test suite resolves to. */
+export const FAKE_USER_ID = "00000000-0000-0000-0000-000000000001";
 
 type Row = Record<string, unknown>;
 type Filter = { col: string; type: "eq" | "in"; value: unknown };
@@ -149,6 +160,7 @@ export class FakeSupabaseClient {
     const newVersion: Row = {
       id: randomUUID(),
       document_id: documentId,
+      user_id: FAKE_USER_ID,
       version_number: nextVersion,
       content: args.p_content,
       source: args.p_source,

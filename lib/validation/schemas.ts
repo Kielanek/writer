@@ -4,6 +4,45 @@ import { seoKeywordConfigSchema } from "@/lib/writing-engine/seoKeywords";
 
 export const uuidSchema = z.string().uuid();
 
+// --- Auth -----------------------------------------------------------------
+
+export const emailSchema = z.email("Enter a valid email address.").trim().toLowerCase();
+
+export const passwordSchema = z
+  .string()
+  .min(8, "Password must be at least 8 characters.")
+  .max(200, "Password is too long.");
+
+export const signUpSchema = z
+  .object({
+    email: emailSchema,
+    password: passwordSchema,
+    confirmPassword: z.string(),
+  })
+  .refine((v) => v.password === v.confirmPassword, {
+    message: "Passwords do not match.",
+    path: ["confirmPassword"],
+  });
+
+export const logInSchema = z.object({
+  email: emailSchema,
+  password: z.string().min(1, "Password is required."),
+});
+
+export const forgotPasswordSchema = z.object({
+  email: emailSchema,
+});
+
+export const resetPasswordSchema = z
+  .object({
+    password: passwordSchema,
+    confirmPassword: z.string(),
+  })
+  .refine((v) => v.password === v.confirmPassword, {
+    message: "Passwords do not match.",
+    path: ["confirmPassword"],
+  });
+
 export const projectNameSchema = z
   .string()
   .trim()

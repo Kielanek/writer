@@ -23,6 +23,7 @@ export interface BuiltInPreset {
 /** A user-created preset, as stored in the `writing_presets` table. */
 export interface CustomPresetRecord {
   id: string;
+  user_id: string;
   document_type: DocumentType;
   name: string;
   description: string | null;

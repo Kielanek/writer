@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createDocumentVersion, getDocument } from "@/lib/db/documents";
-import { buildProjectContext, ProjectContextError } from "@/lib/context/buildProjectContext";
+import { buildProjectContext, ProjectContextError, ProjectNotFoundError } from "@/lib/context/buildProjectContext";
 import { generateDocumentEdit, AiGenerationError } from "@/lib/ai/documentGeneration";
 import { resolveDocumentPresetSnapshot } from "@/lib/writing-engine/snapshot";
 import { resolveDocumentSeoConfig } from "@/lib/writing-engine/seoKeywords";
@@ -37,6 +37,7 @@ export const POST = withApiErrorHandling(async (request: NextRequest, { params }
   try {
     context = await buildProjectContext(document.project_id);
   } catch (err) {
+    if (err instanceof ProjectNotFoundError) throw new ApiError(404, err.message);
     if (err instanceof ProjectContextError) throw new ApiError(422, err.message);
     throw err;
   }
