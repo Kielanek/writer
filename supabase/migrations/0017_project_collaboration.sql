@@ -566,7 +566,11 @@ create policy project_chat_messages_delete_own on project_chat_messages for dele
 -- STEP J: create_project_with_limit now counts/inserts against owner_id
 -- (always the caller — a user can only ever create Projects they own) and
 -- the seat/limit check remains scoped to the Owner's own Projects, matching
--- "shared Projects don't count against a Member's limit."
+-- "shared Projects don't count against a Member's limit." MUST stay
+-- SECURITY DEFINER (see 0008_fix_project_limit_function_security.sql) —
+-- INSERT on `projects` is revoked from `authenticated`, so a SECURITY
+-- INVOKER redefinition here would silently re-break project creation with
+-- "permission denied for table projects" for every real user.
 -- ---------------------------------------------------------------------------
 create or replace function create_project_with_limit(
   p_name text,
@@ -574,7 +578,7 @@ create or replace function create_project_with_limit(
   p_max_projects integer
 ) returns projects
 language plpgsql
-security invoker
+security definer
 set search_path = public
 as $$
 declare
