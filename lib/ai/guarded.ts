@@ -11,7 +11,6 @@ import {
 import { getPlanLimits } from "@/lib/entitlements/plans";
 import { getUserProfile } from "@/lib/entitlements/profile";
 import { recordUsageEvent } from "@/lib/entitlements/usage";
-import { assertTrialActive } from "@/lib/entitlements/trial";
 import { resolveEstimateOrFailClosed, withProviderCostGuard } from "@/lib/entitlements/reservation";
 
 /**
@@ -20,7 +19,7 @@ import { resolveEstimateOrFailClosed, withProviderCostGuard } from "@/lib/entitl
  *
  * guardedGenerateText() gives every text call site, centrally:
  * 1. A conservative worst-case cost estimate BEFORE the OpenAI request.
- * 2. An atomic budget reservation for cost-capped plans (trial) — see
+ * 2. An atomic budget reservation for cost-capped plans (Starter) — see
  *    lib/entitlements/reservation.ts — so simultaneous requests can't
  *    together overspend a shared remaining budget.
  * 3. A real `max_completion_tokens` cap on the live request matching that
@@ -40,18 +39,8 @@ import { resolveEstimateOrFailClosed, withProviderCostGuard } from "@/lib/entitl
  * above reservation/reconciliation machinery applies to it.
  */
 
-/**
- * Checked here (not just at the higher-level checkAiActionLimit/
- * checkTranscriptionAllowance call sites) so an expired trial blocks EVERY
- * OpenAI request uniformly — including automatic, uncounted ones like note
- * metadata generation, which never goes through those two functions at
- * all. lib/ai/noteMetadata.ts already catches any error here and falls
- * back gracefully, so this doesn't newly break note creation — it just
- * stops spending money on an expired trial's behalf.
- */
 async function resolveCostCapContext(): Promise<{ hasCap: boolean }> {
   const profile = await getUserProfile();
-  assertTrialActive(profile);
   const limits = await getPlanLimits(profile.planId);
   return { hasCap: limits.apiCostBudgetUsd !== null };
 }
@@ -120,12 +109,9 @@ export async function guardedGenerateText(
  * $ provider-cost budget. The currently-configured OPENAI_TRANSCRIPTION_MODEL
  * ("whisper-1") has no verified pricing (see provider-pricing.ts), so
  * tracking/reserving a $ cost for it would only ever be a guess; the
- * product decision is that 120 trial minutes/month is the whole limit,
- * full stop. Still blocks an expired trial, same as every other guarded
- * call.
+ * product decision is that the plan's minutes allowance is the whole limit,
+ * full stop.
  */
 export async function guardedTranscribeAudio(file: File): Promise<TranscriptionResult> {
-  const profile = await getUserProfile();
-  assertTrialActive(profile);
   return transcribeAudio(file);
 }

@@ -3,11 +3,13 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
-import { ArrowLeft, FileText, Loader2, Mail, Newspaper, Sparkles } from "lucide-react";
+import { ArrowLeft, Loader2 } from "lucide-react";
+import { cn } from "cn";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { SeoKeywordInput } from "@/components/documents/seo-keyword-input";
+import { DOCUMENT_TYPE_ICON_CONFIG } from "@/components/documents/document-type-icon";
 import { resolveApiErrorMessage } from "@/lib/utils/apiError";
 import { CREATABLE_DOCUMENT_TYPES, DOCUMENT_TYPE_LABELS } from "@/types";
 import type { CreatableDocumentType, DocumentType } from "@/types";
@@ -18,13 +20,6 @@ const DOCUMENT_TYPE_HINTS: Record<CreatableDocumentType, string> = {
   article: "A long-form written piece, targeted to a keyword",
   newsletter: "An email to your list",
   summary: "A concise recap of your notes",
-};
-
-const DOCUMENT_TYPE_ICONS: Record<CreatableDocumentType, typeof FileText> = {
-  linkedin_post: FileText,
-  article: Newspaper,
-  newsletter: Mail,
-  summary: Sparkles,
 };
 
 type Step = "type" | "seo" | "preset" | "instructions";
@@ -110,7 +105,7 @@ export function CreateDocumentForm({ projectId }: { projectId: string }) {
     return (
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
         {CREATABLE_DOCUMENT_TYPES.map((optionType) => {
-          const Icon = DOCUMENT_TYPE_ICONS[optionType];
+          const { icon: Icon, className: tint } = DOCUMENT_TYPE_ICON_CONFIG[optionType];
           return (
             <button
               key={optionType}
@@ -118,7 +113,7 @@ export function CreateDocumentForm({ projectId }: { projectId: string }) {
               onClick={() => selectType(optionType)}
               className="flex items-start gap-3 rounded-xl border bg-card p-4 text-left transition-colors hover:border-foreground/30"
             >
-              <div className="mt-0.5 flex size-9 shrink-0 items-center justify-center rounded-full bg-muted">
+              <div className={cn("mt-0.5 flex size-9 shrink-0 items-center justify-center rounded-full", tint)}>
                 <Icon className="size-4" />
               </div>
               <div>
@@ -144,7 +139,7 @@ export function CreateDocumentForm({ projectId }: { projectId: string }) {
           Change type
         </button>
 
-        <div className="rounded-lg border bg-muted/40 px-3 py-2 text-sm font-medium">
+        <div className={cn("w-fit rounded-lg border-transparent px-3 py-2 text-sm font-medium", DOCUMENT_TYPE_ICON_CONFIG[type].badgeClassName)}>
           {DOCUMENT_TYPE_LABELS[type]}
         </div>
 
@@ -176,7 +171,7 @@ export function CreateDocumentForm({ projectId }: { projectId: string }) {
           {type === "article" ? "Change keywords" : "Change type"}
         </button>
 
-        <div className="rounded-lg border bg-muted/40 px-3 py-2 text-sm font-medium">
+        <div className={cn("w-fit rounded-lg border-transparent px-3 py-2 text-sm font-medium", DOCUMENT_TYPE_ICON_CONFIG[type].badgeClassName)}>
           {DOCUMENT_TYPE_LABELS[type]}
         </div>
 
@@ -250,7 +245,7 @@ export function CreateDocumentForm({ projectId }: { projectId: string }) {
         </button>
 
         <div className="flex flex-wrap gap-2">
-          <div className="rounded-lg border bg-muted/40 px-3 py-2 text-sm font-medium">
+          <div className={cn("rounded-lg border-transparent px-3 py-2 text-sm font-medium", DOCUMENT_TYPE_ICON_CONFIG[type].badgeClassName)}>
             {DOCUMENT_TYPE_LABELS[type]}
           </div>
           <div className="rounded-lg border bg-muted/40 px-3 py-2 text-sm font-medium">

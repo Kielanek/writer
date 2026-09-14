@@ -256,6 +256,7 @@ export class FakeSupabaseClient {
         source: args.p_source,
         instruction: args.p_instruction ?? null,
         restored_from_version: args.p_restored_from_version ?? null,
+        seo_settings: args.p_seo_settings ?? null,
         created_at: new Date().toISOString(),
       };
       versions.push(newVersion);
@@ -264,6 +265,7 @@ export class FakeSupabaseClient {
       const doc = docs.find((d) => d.id === documentId);
       if (doc) {
         doc.content = args.p_content;
+        if (args.p_seo_settings != null) doc.seo_settings = args.p_seo_settings;
         doc.updated_at = new Date().toISOString();
       }
 
@@ -323,7 +325,7 @@ export class FakeSupabaseClient {
       const reservedCostUsd = args.p_reserved_cost_usd as number;
 
       if (completedCost + reservedCost + reservedCostUsd > budgetLimit) {
-        return new FakeRpcResult({ data: null, error: { message: "trial_budget_exhausted" } });
+        return new FakeRpcResult({ data: null, error: { message: "provider_budget_exhausted" } });
       }
 
       const now = new Date().toISOString();

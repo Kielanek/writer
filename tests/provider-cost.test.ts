@@ -25,7 +25,7 @@ import {
   reconcileProviderReservation,
   releaseProviderReservation,
   getProviderCostTotal,
-  TrialBudgetExhaustedError,
+  ProviderBudgetExhaustedError,
 } from "@/lib/entitlements/reservation";
 import { checkAiActionLimit, checkTranscriptionAllowance, getUserEntitlements, recordUsageEvent } from "@/lib/entitlements/usage";
 import { createProject } from "@/lib/db/projects";
@@ -77,9 +77,7 @@ describe("calculateTextCostUsd (Terra)", () => {
     expect(cost).toBeCloseTo(1.2, 10);
   });
 
-  it("4) combined request: mixed cached/uncached input + output (matches the product spec's own worked example)", () => {
-    // 5420 input tokens (all uncached) + 1920 output tokens => $0.03388,
-    // exactly the example given in the task spec for these token counts.
+  it("4) combined request: mixed cached/uncached input + output", () => {
     const cost = calculateTextCostUsd({
       model: "gpt-5.6-terra",
       inputTokens: 5420,
@@ -135,8 +133,8 @@ describe("Plan cost-cap behavior", () => {
     expect(reservation).toBeNull(); // no cap => nothing to reserve, never blocks
   });
 
-  it("9) trial plan has a $0.50 cap", () => {
-    expect(PLAN_LIMITS.trial.apiCostBudgetUsd).toBe(0.5);
+  it("9) Starter has a $0.50 cap, Pro has no cap", () => {
+    expect(PLAN_LIMITS.starter.apiCostBudgetUsd).toBe(0.5);
     expect(PLAN_LIMITS.development.apiCostBudgetUsd).toBeNull();
     expect(PLAN_LIMITS.pro.apiCostBudgetUsd).toBeNull();
   });
@@ -144,9 +142,9 @@ describe("Plan cost-cap behavior", () => {
 
 // --- 10-12: reservation flow -----------------------------------------------
 
-describe("Trial budget reservation", () => {
+describe("Starter budget reservation", () => {
   beforeEach(() => {
-    fakeDb.tables["profiles"] = [{ id: FAKE_USER_ID, plan_id: "trial" }];
+    fakeDb.tables["profiles"] = [{ id: FAKE_USER_ID, plan_id: "starter" }];
   });
 
   it("10) below budget: reservation succeeds", async () => {
@@ -155,11 +153,11 @@ describe("Trial budget reservation", () => {
     expect(reservation!.reservedCostUsd).toBe(0.1);
   });
 
-  it("11) at budget: reservation is rejected with TrialBudgetExhaustedError", async () => {
+  it("11) at budget: reservation is rejected with ProviderBudgetExhaustedError", async () => {
     await recordUsageEvent({ eventType: "provider_cost", quantity: 0.5, metadata: {} });
 
     await expect(checkAndReserveProviderBudget({ feature: "test", estimatedCostUsd: 0.01 })).rejects.toBeInstanceOf(
-      TrialBudgetExhaustedError
+      ProviderBudgetExhaustedError
     );
   });
 
@@ -170,7 +168,24 @@ describe("Trial budget reservation", () => {
 
     // ...but one cent more pushes it over and must be rejected up front.
     await expect(checkAndReserveProviderBudget({ feature: "test", estimatedCostUsd: 0.06 })).rejects.toBeInstanceOf(
-      TrialBudgetExhaustedError
+      ProviderBudgetExhaustedError
+    );
+  });
+
+  it("Starter's provider-cost budget does not reset across a calendar month boundary — it's a lifetime cap", async () => {
+    // Spend recorded "months ago" still counts against the same $0.50 cap —
+    // there is no calendar-month filter for a lifetime-scoped plan.
+    fakeDb.tables["usage_events"] = [
+      {
+        id: "old",
+        user_id: FAKE_USER_ID,
+        event_type: "provider_cost",
+        quantity: 0.5,
+        created_at: "2020-01-01T00:00:00.000Z",
+      },
+    ];
+    await expect(checkAndReserveProviderBudget({ feature: "test", estimatedCostUsd: 0.01 })).rejects.toBeInstanceOf(
+      ProviderBudgetExhaustedError
     );
   });
 });
@@ -179,7 +194,7 @@ describe("Trial budget reservation", () => {
 
 describe("Reservation reconciliation and release", () => {
   beforeEach(() => {
-    fakeDb.tables["profiles"] = [{ id: FAKE_USER_ID, plan_id: "trial" }];
+    fakeDb.tables["profiles"] = [{ id: FAKE_USER_ID, plan_id: "starter" }];
   });
 
   it("13) reconciling records the ACTUAL cost, not the estimate", async () => {
@@ -218,20 +233,15 @@ describe("Reservation reconciliation and release", () => {
 
 describe("Two simultaneous reservations cannot overspend the same remaining budget", () => {
   beforeEach(() => {
-    fakeDb.tables["profiles"] = [{ id: FAKE_USER_ID, plan_id: "trial" }];
+    fakeDb.tables["profiles"] = [{ id: FAKE_USER_ID, plan_id: "starter" }];
   });
 
   it("15) second concurrent reservation sees the first's hold and is rejected", async () => {
-    // Simulates two "simultaneous" requests: the fake's reserve check
-    // consults still-`reserved` rows (not just completed ones), which is
-    // exactly what the real reserve_provider_budget()'s advisory-lock +
-    // committed-cost query does — this proves the ledger design closes the
-    // race, independent of true thread concurrency in a single-process test.
     const first = await checkAndReserveProviderBudget({ feature: "a", estimatedCostUsd: 0.3 });
     expect(first).not.toBeNull();
 
     await expect(checkAndReserveProviderBudget({ feature: "b", estimatedCostUsd: 0.3 })).rejects.toBeInstanceOf(
-      TrialBudgetExhaustedError
+      ProviderBudgetExhaustedError
     );
   });
 });
@@ -310,7 +320,7 @@ describe("Existing product limits are unaffected by the cost layer", () => {
         id: "e1",
         user_id: FAKE_USER_ID,
         event_type: "ai_action",
-        quantity: PLAN_LIMITS.development.aiActionsPerMonth,
+        quantity: PLAN_LIMITS.development.aiActionsLimit,
         created_at: new Date().toISOString(),
       },
     ];
@@ -323,7 +333,7 @@ describe("Existing product limits are unaffected by the cost layer", () => {
         id: "e1",
         user_id: FAKE_USER_ID,
         event_type: "transcription_seconds",
-        quantity: PLAN_LIMITS.development.transcriptionMinutesPerMonth * 60,
+        quantity: PLAN_LIMITS.development.transcriptionMinutesLimit * 60,
         created_at: new Date().toISOString(),
       },
     ];
@@ -346,26 +356,15 @@ describe("Existing product limits are unaffected by the cost layer", () => {
 
 describe("Users cannot alter provider-cost accounting (application-layer contract)", () => {
   it("24) recordUsageEvent always writes via the admin path (see lib/entitlements/usage.ts) — there is no user-facing function that accepts an arbitrary quantity for provider_cost", () => {
-    // This is a structural/contract test: the ONLY functions capable of
-    // writing a provider_cost event are recordUsageEvent (admin client;
-    // see supabase/migrations/0007 revoking INSERT on usage_events from
-    // authenticated) and reconcile_provider_reservation (SECURITY DEFINER
-    // RPC deriving user_id from auth.uid() only). Neither accepts a
-    // caller-supplied user_id. Real enforcement is verified at the SQL
-    // level in supabase/tests/provider_cost_rls_verification.sql.
     expect(typeof recordUsageEvent).toBe("function");
     expect(recordUsageEvent.length).toBeLessThanOrEqual(1); // single options object, no userId param
   });
 
   it("25) reconcile/release only ever touch the caller's OWN reservation (scoped by user_id in the RPC)", async () => {
-    fakeDb.tables["profiles"] = [{ id: FAKE_USER_ID, plan_id: "trial" }];
+    fakeDb.tables["profiles"] = [{ id: FAKE_USER_ID, plan_id: "starter" }];
     const reservation = await checkAndReserveProviderBudget({ feature: "x", estimatedCostUsd: 0.1 });
 
     setCurrentUser("someone-else-entirely");
-    // A different "logged in" user attempting to reconcile/release User A's
-    // reservation id must be a no-op from their perspective (the fake's
-    // rpc() filters by user_id === this.currentUserId, mirroring the real
-    // RPC's `where ... and user_id = auth.uid()`).
     await expect(reconcileProviderReservation(reservation!.id, 0.01)).rejects.toBeTruthy();
 
     setCurrentUser(FAKE_USER_ID);
@@ -378,13 +377,6 @@ describe("Users cannot alter provider-cost accounting (application-layer contrac
 
 describe("Plan cannot be changed by the client", () => {
   it("26) there is no exported function that lets a request-scoped caller write profiles.plan_id", async () => {
-    // getUserPlan()/getUserProfile() only ever read; the only writers are
-    // the handle_new_user() trigger, scripts/set-user-plan.ts, and the
-    // requireAdmin()-gated /api/admin/users/[userId]/plan route (all use
-    // the admin/secret client or SECURITY DEFINER, never the session
-    // client on behalf of an arbitrary request). Verified at the SQL level
-    // too — see supabase/tests/provider_cost_rls_verification.sql's
-    // plan_id UPDATE check.
     const usageModule = await import("@/lib/entitlements/usage");
     const profileModule = await import("@/lib/entitlements/profile");
     expect(Object.keys(usageModule)).not.toContain("setUserPlan");
@@ -397,14 +389,14 @@ describe("Plan cannot be changed by the client", () => {
 
 describe("getUserEntitlements()", () => {
   it("27) includes providerCost internally for a capped plan, but the field is documented as UI-exempt (see app/api/usage/route.ts, which strips it)", async () => {
-    fakeDb.tables["profiles"] = [{ id: FAKE_USER_ID, plan_id: "trial" }];
+    fakeDb.tables["profiles"] = [{ id: FAKE_USER_ID, plan_id: "starter" }];
     await recordUsageEvent({ eventType: "provider_cost", quantity: 0.1, metadata: {} });
 
     const entitlements = await getUserEntitlements();
-    expect(entitlements.plan).toBe("trial");
+    expect(entitlements.plan).toBe("starter");
     expect(entitlements.providerCost).toEqual({ usedUsd: 0.1, limitUsd: 0.5, remainingUsd: 0.4 });
-    expect(entitlements.projects.limit).toBe(PLAN_LIMITS.trial.maxProjects);
-    expect(entitlements.aiActions.limit).toBe(PLAN_LIMITS.trial.aiActionsPerMonth);
+    expect(entitlements.projects.limit).toBe(PLAN_LIMITS.starter.maxProjects);
+    expect(entitlements.aiActions.limit).toBe(PLAN_LIMITS.starter.aiActionsLimit);
   });
 
   it("development plan's entitlements carry providerCost: null (nothing to protect)", async () => {

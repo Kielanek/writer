@@ -41,7 +41,7 @@ export default async function AdminUserDetailPage({
           <h1 className="text-2xl font-bold tracking-tight">{user.email ?? "(no email)"}</h1>
           <p className="mt-1 font-mono text-xs text-muted-foreground">{user.id}</p>
         </div>
-        <PlanStatusBadge planId={user.planId} trialStatus={user.trialStatus} />
+        <PlanStatusBadge planId={user.planId} />
       </div>
 
       <div className="grid grid-cols-2 gap-4 rounded-xl border p-4 text-sm sm:p-5">
@@ -54,12 +54,8 @@ export default async function AdminUserDetailPage({
           <p>{user.lastSignInAt ? formatDateTime(user.lastSignInAt) : "Never"}</p>
         </div>
         <div>
-          <p className="text-xs text-muted-foreground">Trial Started</p>
-          <p>{user.trialStartedAt ? formatShortDate(user.trialStartedAt) : "—"}</p>
-        </div>
-        <div>
-          <p className="text-xs text-muted-foreground">Trial Ends</p>
-          <p>{user.trialEndsAt ? formatShortDate(user.trialEndsAt) : "—"}</p>
+          <p className="text-xs text-muted-foreground">Plan Changed</p>
+          <p>{user.planChangedAt ? formatShortDate(user.planChangedAt) : "—"}</p>
         </div>
       </div>
 
@@ -96,9 +92,9 @@ export default async function AdminUserDetailPage({
         </dl>
 
         <p className="text-xs text-muted-foreground">
-          {entitlements.trialStatus === "not_on_trial"
-            ? `AI Actions and Transcription reset ${formatShortDate(entitlements.aiActions.resetsAt)}.`
-            : "AI Actions and Transcription are scoped to this user's whole trial period."}
+          {entitlements.usagePeriod === "monthly"
+            ? `AI Actions and Transcription reset ${entitlements.aiActions.resetsAt ? formatShortDate(entitlements.aiActions.resetsAt) : "next month"}.`
+            : "AI Actions and Transcription are lifetime allowances for this plan — they never reset."}
         </p>
       </div>
 

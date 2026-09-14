@@ -33,7 +33,7 @@ export function AiEditPanel({
   return (
     <section className="flex flex-col gap-2 rounded-xl border bg-card p-4">
       <Label htmlFor="ai-edit-instruction" className="flex items-center gap-2">
-        <Sparkles className="size-4" />
+        <Sparkles className="size-4 text-violet-500" />
         Ask AI to edit
       </Label>
       <Textarea

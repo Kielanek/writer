@@ -32,6 +32,11 @@ export const POST = withApiErrorHandling(async (_request: NextRequest, { params 
     content: targetVersion.content,
     source: "restore",
     restoredFromVersion: versionNum,
+    // Restoring brings the Article's SEO state (keywords + meta title/
+    // description) back with it, not just the body — falls back to the
+    // document's current seo_settings for an older version saved before
+    // this snapshotting existed, rather than wiping it out.
+    seoSettings: targetVersion.seo_settings ?? document.seo_settings,
   });
 
   return NextResponse.json({ version }, { status: 201 });

@@ -4,7 +4,6 @@ import { requireUser } from "@/lib/supabase/auth";
 import { getUserProfile } from "@/lib/entitlements/profile";
 import { getPlanLimits } from "@/lib/entitlements/plans";
 import { UsageLimitError } from "@/lib/entitlements/errors";
-import { assertTrialActive } from "@/lib/entitlements/trial";
 import type { Project, ProjectWithCounts } from "@/types";
 
 export async function listProjectsWithCounts(): Promise<ProjectWithCounts[]> {
@@ -77,7 +76,6 @@ export async function createProject(input: {
 }): Promise<Project> {
   const supabase = await getSupabaseServerClient();
   const profile = await getUserProfile();
-  assertTrialActive(profile);
   const maxProjects = (await getPlanLimits(profile.planId)).maxProjects;
 
   const { data, error } = await supabase

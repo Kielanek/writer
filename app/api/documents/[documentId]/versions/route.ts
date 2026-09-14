@@ -30,11 +30,13 @@ export const POST = withApiErrorHandling(async (request: NextRequest, { params }
   if (!document) throw new ApiError(404, "Document not found.");
 
   const content = input.content ?? document.content;
+  const seoSettings = input.seoSettings ?? document.seo_settings;
 
   const version = await createDocumentVersion({
     documentId,
     content,
     source: "manual",
+    seoSettings,
   });
 
   return NextResponse.json({ version }, { status: 201 });

@@ -1,19 +1,29 @@
 import { Badge } from "@/components/ui/badge";
 import type { PlanId } from "@/lib/entitlements/plans";
-import type { TrialStatus } from "@/lib/entitlements/trial";
 
 const PLAN_LABELS: Record<PlanId, string> = {
   development: "Development",
-  trial: "Trial",
+  starter: "Starter",
   pro: "Pro",
 };
 
-export function PlanStatusBadge({ planId, trialStatus }: { planId: PlanId; trialStatus: TrialStatus }) {
-  if (trialStatus === "expired") {
-    return <Badge variant="destructive">Trial Expired</Badge>;
-  }
-  if (trialStatus === "trialing") {
-    return <Badge variant="secondary">Trial Active</Badge>;
-  }
-  return <Badge variant="outline">{PLAN_LABELS[planId] ?? planId}</Badge>;
+/** Pro gets a soft accent tint (its own color, not the theme's monochrome default) — a small, deliberate highlight for the plan users pay for. */
+const PLAN_CLASSNAMES: Record<PlanId, string> = {
+  development: "",
+  starter: "",
+  pro: "border-transparent bg-violet-50 text-violet-600",
+};
+
+const PLAN_VARIANTS: Record<PlanId, "secondary" | "outline"> = {
+  development: "outline",
+  starter: "secondary",
+  pro: "outline",
+};
+
+export function PlanStatusBadge({ planId }: { planId: PlanId }) {
+  return (
+    <Badge variant={PLAN_VARIANTS[planId] ?? "outline"} className={PLAN_CLASSNAMES[planId]}>
+      {PLAN_LABELS[planId] ?? planId}
+    </Badge>
+  );
 }

@@ -15,7 +15,7 @@ function fallbackTitle(): string {
 /**
  * Generates a title + short description for a note's content. Never throws:
  * if generation fails, returns a safe fallback so the note's transcription
- * is never lost. This includes a trial account with an exhausted provider-
+ * is never lost. This includes a Starter account with an exhausted provider-
  * cost budget — that must degrade to the fallback title, never block note
  * creation, which is why the catch block below stays unconditional.
  *

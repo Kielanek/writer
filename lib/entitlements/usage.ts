@@ -3,10 +3,9 @@ import { getSupabaseServerClient } from "@/lib/db/client";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { requireUser } from "@/lib/supabase/auth";
 import { getEntitlementPeriod } from "@/lib/entitlements/period";
-import { getPlanLimits, type PlanId, type PlanLimits } from "@/lib/entitlements/plans";
+import { getPlanLimits, type PlanId, type PlanLimits, type UsagePeriodKind } from "@/lib/entitlements/plans";
 import { getUserProfile } from "@/lib/entitlements/profile";
 import { UsageLimitError } from "@/lib/entitlements/errors";
-import { assertTrialActive, getTrialStatus, type TrialStatus } from "@/lib/entitlements/trial";
 import { getProviderCostTotal } from "@/lib/entitlements/reservation";
 
 export type UsageEventType = "ai_action" | "transcription_seconds" | "provider_cost";
@@ -15,23 +14,24 @@ export interface ResourceUsage {
   used: number;
   limit: number;
   remaining: number;
-  resetsAt: string;
+  /** Null when this resource never resets (Starter's lifetime allowance, Development). */
+  resetsAt: string | null;
 }
 
 export interface UserEntitlements {
   plan: PlanId;
-  trialStatus: TrialStatus;
-  trialEndsAt: string | null;
+  planDisplayName: string;
+  usagePeriod: UsagePeriodKind;
   projects: { used: number; limit: number; remaining: number };
   aiActions: ResourceUsage;
   transcriptionMinutes: ResourceUsage;
   /**
-   * INTERNAL ONLY. Real OpenAI provider-cost accounting — never send this
-   * to the frontend (GET /api/usage strips it before responding; see
-   * lib/entitlements/plans.ts's apiCostBudgetUsd doc comment for why).
-   * `null` when the current plan has no cost cap (development/pro). The
-   * Admin Panel is the one place this DOES get exposed (by API design, to
-   * an already-verified admin only) — see app/api/admin/users routes.
+   * INTERNAL ONLY. Real OpenAI provider-cost accounting — never send this to
+   * the frontend (GET /api/usage strips it before responding; see
+   * lib/entitlements/plans.ts's apiCostBudgetUsd doc comment for why). `null`
+   * when the current plan has no cost cap (development/pro today). The
+   * Admin Panel is the one place this DOES get exposed (by API design, to an
+   * already-verified admin only) — see app/api/admin/users routes.
    */
   providerCost: { usedUsd: number; limitUsd: number; remainingUsd: number } | null;
 }
@@ -40,28 +40,26 @@ export interface UserEntitlements {
  * The pure arithmetic behind every entitlement snapshot — used by BOTH the
  * self-service path (getUserEntitlements, below) and the Admin Panel's
  * per-user view (lib/admin/entitlements.ts), so "7 / 10" means the exact
- * same thing wherever it's computed from. Only the raw inputs differ
- * between those two callers (session-scoped RPC totals vs. admin-client
- * totals for an arbitrary user) — never the math.
+ * same thing wherever it's computed from. Only the raw inputs differ between
+ * those two callers (session-scoped RPC totals vs. admin-client totals for
+ * an arbitrary user) — never the math.
  */
 export function buildEntitlementsSnapshot(input: {
   plan: PlanId;
   limits: PlanLimits;
-  trialStatus: TrialStatus;
-  trialEndsAt: string | null;
-  periodEnd: Date;
+  periodEnd: Date | null;
   projectCount: number;
   aiActionsUsed: number;
   transcriptionSecondsUsed: number;
   providerCostUsed: number | null;
 }): UserEntitlements {
   const transcriptionMinutesUsed = Math.round((input.transcriptionSecondsUsed / 60) * 10) / 10;
-  const resetsAt = input.periodEnd.toISOString();
+  const resetsAt = input.periodEnd ? input.periodEnd.toISOString() : null;
 
   return {
     plan: input.plan,
-    trialStatus: input.trialStatus,
-    trialEndsAt: input.trialEndsAt,
+    planDisplayName: input.limits.displayName,
+    usagePeriod: input.limits.usagePeriod,
     projects: {
       used: input.projectCount,
       limit: input.limits.maxProjects,
@@ -69,14 +67,14 @@ export function buildEntitlementsSnapshot(input: {
     },
     aiActions: {
       used: input.aiActionsUsed,
-      limit: input.limits.aiActionsPerMonth,
-      remaining: Math.max(0, input.limits.aiActionsPerMonth - input.aiActionsUsed),
+      limit: input.limits.aiActionsLimit,
+      remaining: Math.max(0, input.limits.aiActionsLimit - input.aiActionsUsed),
       resetsAt,
     },
     transcriptionMinutes: {
       used: transcriptionMinutesUsed,
-      limit: input.limits.transcriptionMinutesPerMonth,
-      remaining: Math.max(0, input.limits.transcriptionMinutesPerMonth - transcriptionMinutesUsed),
+      limit: input.limits.transcriptionMinutesLimit,
+      remaining: Math.max(0, input.limits.transcriptionMinutesLimit - transcriptionMinutesUsed),
       resetsAt,
     },
     providerCost:
@@ -95,11 +93,11 @@ export function buildEntitlementsSnapshot(input: {
  * caller. Goes through the get_usage_total() Postgres function (see
  * supabase/migrations/0007_usage_limits.sql) rather than a plain
  * `.select("quantity")` + JS-side sum, so the aggregation happens in the
- * database and the function's own `auth.uid()` check is the source of
- * truth for "whose usage this is" — never a value threaded through from
- * the caller. `periodStart` comes from getEntitlementPeriod() — a trial
- * account's whole trial, everyone else's calendar month (see that
- * function's doc comment).
+ * database and the function's own `auth.uid()` check is the source of truth
+ * for "whose usage this is" — never a value threaded through from the
+ * caller. `periodStart` comes from getEntitlementPeriod() — the epoch for a
+ * lifetime-scoped plan (Starter/Development), or the current Pro period's
+ * start (see that function's doc comment).
  */
 async function getUsageTotal(eventType: UsageEventType, periodStart: Date): Promise<number> {
   const supabase = await getSupabaseServerClient();
@@ -115,10 +113,10 @@ async function getUsageTotal(eventType: UsageEventType, periodStart: Date): Prom
 
 /**
  * Records a billable event. ALWAYS uses the admin/secret client — normal
- * users have no INSERT grant on usage_events at all (see the migration),
- * so this is the only code path that can write here. Call this only after
- * the operation it accounts for has actually succeeded; quantity must
- * always be server-computed, never a value that came from the request body.
+ * users have no INSERT grant on usage_events at all (see the migration), so
+ * this is the only code path that can write here. Call this only after the
+ * operation it accounts for has actually succeeded; quantity must always be
+ * server-computed, never a value that came from the request body.
  */
 export async function recordUsageEvent(input: {
   eventType: UsageEventType;
@@ -141,36 +139,35 @@ export async function recordUsageEvent(input: {
 /**
  * Call before every user-initiated AI operation that isn't note metadata
  * generation (see lib/ai/noteMetadata.ts's doc comment for why that one is
- * excluded from limits). Throws TrialExpiredError first (an expired trial
- * blocks the action regardless of remaining quota), then UsageLimitError —
- * never returns false — so callers can't accidentally ignore the result.
+ * excluded from limits). Throws UsageLimitError once the plan's limit is
+ * reached — never returns false — so callers can't accidentally ignore the
+ * result. There is no time-based expiration to check first: Starter has no
+ * end date, only a lifetime usage ceiling.
  *
- * Concurrency note: this reads the current total, compares to the limit,
- * and returns; it does not reserve the slot. Two nearly-simultaneous
- * requests from the same user can both pass this check before either's
+ * Concurrency note: this reads the current total, compares to the limit, and
+ * returns; it does not reserve the slot. Two nearly-simultaneous requests
+ * from the same user can both pass this check before either's
  * recordUsageEvent() call lands, allowing a small overrun bounded by how
  * many requests that user has in flight at once (in practice: a handful of
- * browser tabs, not an exploitable amount). Fully closing this would need
- * a reservation/ledger system, which is out of scope for this MVP — see
- * create_project_with_limit() in the migration for the one place an
- * atomic, advisory-lock-based check was worth the complexity (creation is
- * a single fast DB statement; AI calls take seconds against an external
- * API, so "reserve before, release after" would need far more machinery).
+ * browser tabs, not an exploitable amount). Fully closing this would need a
+ * reservation/ledger system, which is out of scope for this MVP — see
+ * create_project_with_limit() in the migration for the one place an atomic,
+ * advisory-lock-based check was worth the complexity (creation is a single
+ * fast DB statement; AI calls take seconds against an external API, so
+ * "reserve before, release after" would need far more machinery).
  */
 export async function checkAiActionLimit(): Promise<void> {
   const profile = await getUserProfile();
-  assertTrialActive(profile);
-
   const limits = await getPlanLimits(profile.planId);
   const period = getEntitlementPeriod(profile);
   const used = await getUsageTotal("ai_action", period.start);
 
-  if (used >= limits.aiActionsPerMonth) {
+  if (used >= limits.aiActionsLimit) {
     throw new UsageLimitError({
       resource: "ai_actions",
       used,
-      limit: limits.aiActionsPerMonth,
-      resetsAt: period.end.toISOString(),
+      limit: limits.aiActionsLimit,
+      resetsAt: period.end?.toISOString() ?? null,
     });
   }
 }
@@ -179,25 +176,23 @@ export async function checkAiActionLimit(): Promise<void> {
  * Call before transcribing audio. Same "already exhausted" check as
  * checkAiActionLimit() — not a pre-reservation of this specific file's
  * duration, since that duration isn't known until Whisper has already
- * transcribed it (see lib/ai/transcribeAudio.ts). A single transcription
- * can therefore push a user slightly over their limit; the NEXT one is
- * blocked. Documented rather than solved with a fragile duration estimate.
+ * transcribed it (see lib/ai/transcribeAudio.ts). A single transcription can
+ * therefore push a user slightly over their limit; the NEXT one is blocked.
+ * Documented rather than solved with a fragile duration estimate.
  */
 export async function checkTranscriptionAllowance(): Promise<void> {
   const profile = await getUserProfile();
-  assertTrialActive(profile);
-
   const limits = await getPlanLimits(profile.planId);
   const period = getEntitlementPeriod(profile);
-  const limitSeconds = limits.transcriptionMinutesPerMonth * 60;
+  const limitSeconds = limits.transcriptionMinutesLimit * 60;
   const usedSeconds = await getUsageTotal("transcription_seconds", period.start);
 
   if (usedSeconds >= limitSeconds) {
     throw new UsageLimitError({
       resource: "transcription_minutes",
       used: Math.round((usedSeconds / 60) * 10) / 10,
-      limit: limits.transcriptionMinutesPerMonth,
-      resetsAt: period.end.toISOString(),
+      limit: limits.transcriptionMinutesLimit,
+      resetsAt: period.end?.toISOString() ?? null,
     });
   }
 }
@@ -222,8 +217,6 @@ export async function getUserEntitlements(): Promise<UserEntitlements> {
   return buildEntitlementsSnapshot({
     plan: profile.planId,
     limits,
-    trialStatus: getTrialStatus(profile),
-    trialEndsAt: profile.trialEndsAt,
     periodEnd: period.end,
     projectCount: projectCount ?? 0,
     aiActionsUsed,

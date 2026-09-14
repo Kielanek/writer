@@ -15,8 +15,8 @@ export const GET = withApiErrorHandling(async () => {
   const entitlements = await getUserEntitlements();
   return NextResponse.json({
     plan: entitlements.plan,
-    trialStatus: entitlements.trialStatus,
-    trialEndsAt: entitlements.trialEndsAt,
+    planDisplayName: entitlements.planDisplayName,
+    usagePeriod: entitlements.usagePeriod,
     projects: entitlements.projects,
     aiActions: entitlements.aiActions,
     transcriptionMinutes: entitlements.transcriptionMinutes,

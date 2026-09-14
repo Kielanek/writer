@@ -66,8 +66,8 @@ describe("recordUsageEvent + getUserEntitlements", () => {
 
     const entitlements = await getUserEntitlements();
     expect(entitlements.aiActions.used).toBe(2);
-    expect(entitlements.aiActions.limit).toBe(PLAN_LIMITS.development.aiActionsPerMonth);
-    expect(entitlements.aiActions.remaining).toBe(PLAN_LIMITS.development.aiActionsPerMonth - 2);
+    expect(entitlements.aiActions.limit).toBe(PLAN_LIMITS.development.aiActionsLimit);
+    expect(entitlements.aiActions.remaining).toBe(PLAN_LIMITS.development.aiActionsLimit - 2);
   });
 
   it("transcription usage is tracked in seconds internally, minutes in entitlements", async () => {
@@ -110,7 +110,7 @@ describe("checkAiActionLimit", () => {
   });
 
   it("throws UsageLimitError once usage reaches the plan limit", async () => {
-    const limit = PLAN_LIMITS.development.aiActionsPerMonth;
+    const limit = PLAN_LIMITS.development.aiActionsLimit;
     fakeDb.tables["usage_events"] = [
       { id: "e1", user_id: FAKE_USER_ID, event_type: "ai_action", quantity: limit, created_at: new Date().toISOString() },
     ];
@@ -121,7 +121,7 @@ describe("checkAiActionLimit", () => {
 
 describe("checkTranscriptionAllowance", () => {
   it("throws UsageLimitError once usage reaches the plan's minute limit", async () => {
-    const limitSeconds = PLAN_LIMITS.development.transcriptionMinutesPerMonth * 60;
+    const limitSeconds = PLAN_LIMITS.development.transcriptionMinutesLimit * 60;
     fakeDb.tables["usage_events"] = [
       {
         id: "e1",

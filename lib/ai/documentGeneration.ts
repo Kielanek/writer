@@ -7,6 +7,7 @@ import {
   composeKeywordRepairPrompt,
 } from "@/lib/writing-engine/composePrompt";
 import { getMissingKeywords } from "@/lib/utils/keywordMatching";
+import { buildDocumentMetaPrompt, parseDocumentMetaResponse, type ParsedDocumentMeta } from "@/lib/ai/prompts/documentMeta";
 import type { ProjectContext } from "@/lib/context/buildProjectContext";
 import type { PresetSnapshot } from "@/lib/writing-engine/types";
 import type { SeoKeywordConfig } from "@/lib/writing-engine/seoKeywords";
@@ -120,4 +121,20 @@ export async function generateDocumentEdit(input: {
     seoKeywords: input.seoKeywords,
     repairFeature: "document_edit_repair",
   });
+}
+
+/**
+ * Derives a Google-search meta title + description from an Article's own
+ * title/content (and primary keyword, if set) — a short, separate AI call,
+ * not part of the main generation/edit pass, so it can be (re)run on demand
+ * from the SEO Meta panel without regenerating the article itself.
+ */
+export async function generateDocumentMeta(input: {
+  title: string;
+  content: string;
+  primaryKeyword?: string;
+}): Promise<ParsedDocumentMeta> {
+  const { system, prompt } = buildDocumentMetaPrompt(input);
+  const { text } = await guardedGenerateText("document_meta", { system, prompt, temperature: 0.5 });
+  return parseDocumentMetaResponse(text);
 }

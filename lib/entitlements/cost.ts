@@ -4,7 +4,7 @@ import { PROVIDER_PRICING } from "@/lib/entitlements/provider-pricing";
 /**
  * Thrown whenever a cost calculation is asked about a model with no entry
  * in PROVIDER_PRICING. Callers MUST NOT catch this and silently treat it as
- * zero cost — that would defeat the trial budget entirely. See
+ * zero cost — that would defeat the provider-cost budget entirely. See
  * lib/entitlements/reservation.ts's handling: fails closed (blocks the
  * action) for any plan with a real apiCostBudgetUsd, allowed-but-logged for
  * plans with no cap.
@@ -118,6 +118,7 @@ export const FEATURE_COST_GUARDS = {
   ask_project: { maxOutputTokens: 1500 },
   analyze_examples: { maxOutputTokens: 800 },
   note_metadata: { maxOutputTokens: 200 },
+  document_meta: { maxOutputTokens: 300 },
 } as const;
 
 export type CostGuardedFeature = keyof typeof FEATURE_COST_GUARDS;

@@ -1,7 +1,6 @@
 import "server-only";
 import { createAdminClient } from "@/lib/supabase/admin";
 import type { PlanId } from "@/lib/entitlements/plans";
-import { getTrialStatus, type TrialStatus } from "@/lib/entitlements/trial";
 
 export interface AdminUserSummary {
   id: string;
@@ -9,18 +8,16 @@ export interface AdminUserSummary {
   createdAt: string;
   lastSignInAt: string | null;
   planId: PlanId;
-  trialStartedAt: string | null;
-  trialEndsAt: string | null;
-  trialStatus: TrialStatus;
+  planChangedAt: string | null;
 }
 
 /**
- * Safety cap on how many auth.users this module will ever scan in one
- * admin request. The GoTrue Admin API has no server-side search/sort, so
- * "newest first" + "search by email" are done in memory after fetching —
- * fine at this product's current (and foreseeable near-term) user count,
- * but deliberately bounded rather than truly unlimited. If this cap is
- * ever hit in practice, replace with a proper indexed query.
+ * Safety cap on how many auth.users this module will ever scan in one admin
+ * request. The GoTrue Admin API has no server-side search/sort, so "newest
+ * first" + "search by email" are done in memory after fetching — fine at
+ * this product's current (and foreseeable near-term) user count, but
+ * deliberately bounded rather than truly unlimited. If this cap is ever hit
+ * in practice, replace with a proper indexed query.
  */
 const MAX_USERS_SCANNED = 5000;
 const GOTRUE_PAGE_SIZE = 1000;
@@ -51,22 +48,17 @@ async function fetchAllAuthUsers(): Promise<RawAuthUser[]> {
 interface ProfileRow {
   id: string;
   plan_id: string;
-  trial_started_at: string | null;
-  trial_ends_at: string | null;
+  plan_changed_at: string | null;
 }
 
 function toSummary(user: RawAuthUser, profile: ProfileRow | undefined): AdminUserSummary {
-  const planId = (profile?.plan_id as PlanId) ?? "development";
-  const trialEndsAt = profile?.trial_ends_at ?? null;
   return {
     id: user.id,
     email: user.email ?? null,
     createdAt: user.created_at,
     lastSignInAt: user.last_sign_in_at ?? null,
-    planId,
-    trialStartedAt: profile?.trial_started_at ?? null,
-    trialEndsAt,
-    trialStatus: getTrialStatus({ planId, trialEndsAt }),
+    planId: (profile?.plan_id as PlanId) ?? "development",
+    planChangedAt: profile?.plan_changed_at ?? null,
   };
 }
 
@@ -97,7 +89,7 @@ export async function listAdminUsers(input: {
 
   const { data: profiles, error } = await admin
     .from("profiles")
-    .select("id, plan_id, trial_started_at, trial_ends_at")
+    .select("id, plan_id, plan_changed_at")
     .in("id", pageUsers.map((u) => u.id));
   if (error) throw error;
 
@@ -114,7 +106,7 @@ export async function getAdminUserDetail(userId: string): Promise<AdminUserSumma
 
   const { data: profile, error: profileError } = await admin
     .from("profiles")
-    .select("id, plan_id, trial_started_at, trial_ends_at")
+    .select("id, plan_id, plan_changed_at")
     .eq("id", userId)
     .maybeSingle();
   if (profileError) throw profileError;
@@ -138,8 +130,8 @@ export async function getAdminUserContentCounts(
 
 export interface AdminDashboardSummary {
   totalUsers: number;
-  activeTrials: number;
-  expiredTrials: number;
+  starterUsers: number;
+  proUsers: number;
   newUsersToday: number;
 }
 
@@ -147,7 +139,7 @@ export async function getAdminDashboardSummary(): Promise<AdminDashboardSummary>
   const admin = createAdminClient();
   const [authUsers, { data: profiles, error }] = await Promise.all([
     fetchAllAuthUsers(),
-    admin.from("profiles").select("plan_id, trial_ends_at"),
+    admin.from("profiles").select("plan_id"),
   ]);
   if (error) throw error;
 
@@ -155,14 +147,12 @@ export async function getAdminDashboardSummary(): Promise<AdminDashboardSummary>
   const todayStart = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
   const newUsersToday = authUsers.filter((u) => new Date(u.created_at) >= todayStart).length;
 
-  let activeTrials = 0;
-  let expiredTrials = 0;
+  let starterUsers = 0;
+  let proUsers = 0;
   for (const p of profiles ?? []) {
-    if (p.plan_id !== "trial") continue;
-    const status = getTrialStatus({ planId: p.plan_id, trialEndsAt: p.trial_ends_at });
-    if (status === "trialing") activeTrials++;
-    else if (status === "expired") expiredTrials++;
+    if (p.plan_id === "starter") starterUsers++;
+    else if (p.plan_id === "pro") proUsers++;
   }
 
-  return { totalUsers: authUsers.length, activeTrials, expiredTrials, newUsersToday };
+  return { totalUsers: authUsers.length, starterUsers, proUsers, newUsersToday };
 }

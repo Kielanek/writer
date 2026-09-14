@@ -73,6 +73,7 @@ export const POST = withApiErrorHandling(async (request: NextRequest, { params }
     content: revisedContent,
     source: "ai_edit",
     instruction: input.instruction,
+    seoSettings: document.seo_settings,
   });
 
   return NextResponse.json({ version }, { status: 201 });

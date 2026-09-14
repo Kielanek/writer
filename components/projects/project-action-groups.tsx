@@ -7,7 +7,7 @@ import { AddTextNoteDialog } from "@/components/notes/add-text-note-dialog";
 
 export function ProjectActionGroups({ projectId }: { projectId: string }) {
   return (
-    <div className="grid grid-cols-2 gap-3">
+    <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
       <div className="flex flex-col gap-2 rounded-xl border bg-card p-3">
         <span className="px-0.5 text-sm font-medium text-foreground">Capture</span>
         <RecordNoteDialog projectId={projectId} />
@@ -25,7 +25,7 @@ export function ProjectActionGroups({ projectId }: { projectId: string }) {
         </Button>
         <Button asChild variant="outline" className="h-11 w-full justify-start gap-2.5 text-sm font-medium">
           <Link href={`/projects/${projectId}/documents/new`}>
-            <Plus className="size-4" />
+            <Plus className="size-4 text-emerald-600" />
             Create Document
           </Link>
         </Button>

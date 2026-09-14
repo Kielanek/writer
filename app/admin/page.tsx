@@ -2,9 +2,9 @@ import { notFound } from "next/navigation";
 import { isAdmin } from "@/lib/admin/auth";
 import { getAdminDashboardSummary, listAdminUsers } from "@/lib/admin/users";
 import { getEntitlementsForUser } from "@/lib/admin/entitlements";
-import { getTrialConfig } from "@/lib/admin/planConfig";
+import { getAllPlanConfigs } from "@/lib/admin/planConfig";
 import { DashboardSummary } from "@/components/admin/dashboard-summary";
-import { TrialSettingsForm } from "@/components/admin/trial-settings-form";
+import { PlanSettingsForm } from "@/components/admin/plan-settings-form";
 import { UsersTable, type AdminUserRow } from "@/components/admin/users-table";
 
 export const dynamic = "force-dynamic";
@@ -14,9 +14,9 @@ const USERS_PER_PAGE = 25;
 export default async function AdminPage() {
   if (!(await isAdmin())) notFound();
 
-  const [summary, trialConfig, firstPage] = await Promise.all([
+  const [summary, planConfigs, firstPage] = await Promise.all([
     getAdminDashboardSummary(),
-    getTrialConfig(),
+    getAllPlanConfigs(),
     listAdminUsers({ page: 1, perPage: USERS_PER_PAGE }),
   ]);
 
@@ -29,13 +29,13 @@ export default async function AdminPage() {
       <div>
         <h1 className="text-2xl font-bold tracking-tight">Admin</h1>
         <p className="mt-1 text-sm text-muted-foreground">
-          Trial configuration and registered users. Visible only to authorized admin accounts.
+          Plan configuration and registered users. Visible only to authorized admin accounts.
         </p>
       </div>
 
       <DashboardSummary summary={summary} />
 
-      <TrialSettingsForm initialConfig={trialConfig} />
+      <PlanSettingsForm initialConfigs={planConfigs} />
 
       <div className="flex flex-col gap-3">
         <h2 className="text-lg font-semibold tracking-tight">Users</h2>

@@ -13,8 +13,8 @@ export function DashboardSummary({ summary }: { summary: AdminDashboardSummary }
   return (
     <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
       <StatTile label="Total Users" value={summary.totalUsers} />
-      <StatTile label="Active Trials" value={summary.activeTrials} />
-      <StatTile label="Expired Trials" value={summary.expiredTrials} />
+      <StatTile label="Starter" value={summary.starterUsers} />
+      <StatTile label="Pro" value={summary.proUsers} />
       <StatTile label="New Today" value={summary.newUsersToday} />
     </div>
   );

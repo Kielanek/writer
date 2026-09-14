@@ -2,20 +2,24 @@ import { AudioLines, FileText, Mic } from "lucide-react";
 import { cn } from "cn";
 import type { NoteType } from "@/types";
 
-const NOTE_TYPE_ICONS: Record<NoteType, typeof Mic> = {
-  recording: Mic,
-  audio_upload: AudioLines,
-  text: FileText,
+export const NOTE_TYPE_ICON_CONFIG: Record<
+  NoteType,
+  { icon: typeof Mic; className: string; badgeClassName: string }
+> = {
+  recording: { icon: Mic, className: "bg-violet-50 text-violet-600", badgeClassName: "bg-violet-50 text-violet-600" },
+  audio_upload: { icon: AudioLines, className: "bg-sky-50 text-sky-600", badgeClassName: "bg-sky-50 text-sky-600" },
+  text: { icon: FileText, className: "bg-amber-50 text-amber-600", badgeClassName: "bg-amber-50 text-amber-600" },
 };
 
-/** Neutral icon treatment for note types — deliberately quieter than document type icons. */
+/** Soft-tint icon chip per note type — same treatment as document type icons, for a consistent, gently colorful card list. */
 export function NoteTypeIcon({ type, className }: { type: NoteType; className?: string }) {
-  const Icon = NOTE_TYPE_ICONS[type];
+  const { icon: Icon, className: tint } = NOTE_TYPE_ICON_CONFIG[type];
 
   return (
     <div
       className={cn(
-        "flex size-9 shrink-0 items-center justify-center rounded-lg bg-muted text-muted-foreground",
+        "flex size-9 shrink-0 items-center justify-center rounded-lg",
+        tint,
         className
       )}
     >

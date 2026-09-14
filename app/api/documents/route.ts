@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createDocument, createDocumentVersion } from "@/lib/db/documents";
 import { buildProjectContext, ProjectContextError, ProjectNotFoundError } from "@/lib/context/buildProjectContext";
-import { generateDocumentContent, AiGenerationError } from "@/lib/ai/documentGeneration";
+import { generateDocumentContent, generateDocumentMeta, AiGenerationError } from "@/lib/ai/documentGeneration";
 import { resolvePreset } from "@/lib/writing-engine/customPresets/service";
 import { buildPresetSnapshot } from "@/lib/writing-engine/snapshot";
 import { WRITING_ENGINE_VERSION } from "@/lib/writing-engine/version";
@@ -51,6 +51,24 @@ export const POST = withApiErrorHandling(async (request: NextRequest) => {
     metadata: { feature: "document_generation", model: env.openaiTextModel(), documentType: input.type },
   });
 
+  // Every new Article also gets an initial meta title/description, derived
+  // from the content that was just generated — a short, separate call so a
+  // failure here never blocks Article creation itself (the user can always
+  // generate or fill these in manually afterward from the SEO Meta editor).
+  let seoSettings = input.seoSettings ?? null;
+  if (input.type === "article" && seoSettings) {
+    try {
+      const meta = await generateDocumentMeta({
+        title: DOCUMENT_TYPE_LABELS[input.type],
+        content,
+        primaryKeyword: seoSettings.primaryKeyword,
+      });
+      seoSettings = { ...seoSettings, ...meta };
+    } catch (err) {
+      console.error("Initial SEO meta generation failed; Article was still created.", err);
+    }
+  }
+
   const document = await createDocument({
     projectId: input.projectId,
     type: input.type,
@@ -60,13 +78,14 @@ export const POST = withApiErrorHandling(async (request: NextRequest) => {
     presetId: preset.id,
     presetSnapshot,
     writingEngineVersion: WRITING_ENGINE_VERSION,
-    seoSettings: input.seoSettings ?? null,
+    seoSettings,
   });
 
   await createDocumentVersion({
     documentId: document.id,
     content,
     source: "initial",
+    seoSettings,
   });
 
   return NextResponse.json({ document }, { status: 201 });

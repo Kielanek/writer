@@ -84,7 +84,9 @@ export function AskProjectChat({
       <div className="flex flex-1 flex-col gap-4">
         {messages.length === 0 ? (
           <div className="flex flex-1 flex-col items-center justify-center gap-2 rounded-xl border border-dashed py-16 text-center">
-            <MessageCircle className="size-6 text-muted-foreground" />
+            <div className="flex size-10 items-center justify-center rounded-full bg-indigo-50 text-indigo-500">
+              <MessageCircle className="size-5" />
+            </div>
             <p className="max-w-xs text-sm text-muted-foreground">
               Ask anything about the notes in this Project.
             </p>
@@ -97,7 +99,7 @@ export function AskProjectChat({
                 className={`flex flex-col gap-1 rounded-xl p-3 text-sm leading-relaxed ${
                   message.role === "user"
                     ? "self-end bg-primary text-primary-foreground"
-                    : "self-start bg-muted"
+                    : "self-start bg-indigo-50 text-foreground"
                 } max-w-[85%] whitespace-pre-wrap`}
               >
                 {message.content}

@@ -24,7 +24,7 @@
  * cost cannot be calculated for the currently-configured model — see
  * lib/entitlements/cost.ts's UnknownModelPricingError handling for exactly
  * what happens in that case (fails closed for cost-capped plans like
- * trial; allowed-but-logged for uncapped plans like development).
+ * Starter; allowed-but-logged for uncapped plans like development).
  */
 
 export type ProviderPricingEntry =

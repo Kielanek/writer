@@ -10,7 +10,9 @@ export function NotesSection({ notes }: { notes: Note[] }) {
 
       {notes.length === 0 ? (
         <div className="flex flex-col items-center gap-2 rounded-xl border border-dashed py-10 text-center">
-          <Mic className="size-6 text-muted-foreground" />
+          <div className="flex size-10 items-center justify-center rounded-full bg-violet-50 text-violet-500">
+            <Mic className="size-5" />
+          </div>
           <p className="text-sm text-muted-foreground">
             No notes yet. Record your first idea.
           </p>

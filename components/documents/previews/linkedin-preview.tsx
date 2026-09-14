@@ -1,5 +1,6 @@
 import { MessageCircle, Repeat2, Send, ThumbsUp } from "lucide-react";
 import { normalizeLinkedInText } from "@/lib/utils/normalizeLinkedInText";
+import { Logo } from "@/components/brand/logo";
 
 // LinkedIn's own editor truncates posts around ~3000 characters before
 // "see more" — this is a rough, clearly-labeled heads-up, not an exact simulator.
@@ -20,11 +21,9 @@ export function LinkedInPreview({ content }: { content: string }) {
     <div className="flex flex-col gap-2">
       <div className="mx-auto w-full max-w-xl rounded-xl border bg-card p-4">
         <div className="flex items-center gap-2.5">
-          <div className="flex size-10 shrink-0 items-center justify-center rounded-full bg-blue-50 text-sm font-semibold text-blue-600">
-            YN
-          </div>
+          <Logo className="size-10 rounded-full" />
           <div className="min-w-0">
-            <div className="truncate text-sm font-semibold text-foreground">Your Name</div>
+            <div className="truncate text-sm font-semibold text-foreground">VoiceValue</div>
             <div className="text-xs text-muted-foreground">1m</div>
           </div>
         </div>

@@ -28,7 +28,7 @@ export const PATCH = withApiErrorHandling(async (request: NextRequest, { params 
   const existing = await getDocument(documentId);
   if (!existing) throw new ApiError(404, "Document not found.");
   if (input.seoSettings && existing.type !== "article") {
-    throw new ApiError(400, "SEO keywords can only be set on Article documents.");
+    throw new ApiError(400, "SEO keywords and meta title/description can only be set on Article documents.");
   }
 
   const document = await updateDocumentContent(documentId, input);

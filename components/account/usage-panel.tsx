@@ -1,49 +1,54 @@
+import Link from "next/link";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { UsageBar } from "@/components/account/usage-bar";
 import { formatShortDate } from "@/lib/utils/format";
 import type { UserEntitlements } from "@/lib/entitlements/usage";
-
-const PLAN_LABELS: Record<UserEntitlements["plan"], string> = {
-  development: "Development",
-  trial: "Trial",
-  pro: "Pro",
-};
 
 export function UsagePanel({
   entitlements,
 }: {
   entitlements: Pick<
     UserEntitlements,
-    "plan" | "trialStatus" | "trialEndsAt" | "projects" | "aiActions" | "transcriptionMinutes"
+    "plan" | "planDisplayName" | "usagePeriod" | "projects" | "aiActions" | "transcriptionMinutes"
   >;
 }) {
-  const { plan, trialStatus, trialEndsAt, projects, aiActions, transcriptionMinutes } = entitlements;
-  const isExpiredTrial = trialStatus === "expired";
+  const { plan, planDisplayName, usagePeriod, projects, aiActions, transcriptionMinutes } = entitlements;
+
+  const aiActionsExhausted = aiActions.remaining <= 0;
+  const transcriptionExhausted = transcriptionMinutes.remaining <= 0;
+  const projectsExhausted = projects.remaining <= 0;
+  const anyLimitReached = aiActionsExhausted || transcriptionExhausted || projectsExhausted;
 
   return (
     <div className="flex flex-col gap-5 rounded-xl border p-4 sm:p-5">
       <div className="flex items-center justify-between gap-3">
         <div>
-          <p className="text-sm text-muted-foreground">Current Plan</p>
-          <p className="text-lg font-semibold">{PLAN_LABELS[plan] ?? plan}</p>
-          {trialStatus === "trialing" && trialEndsAt && (
-            <p className="mt-0.5 text-xs text-muted-foreground">Trial ends {formatShortDate(trialEndsAt)}</p>
-          )}
+          <p className="text-sm text-muted-foreground">Plan</p>
+          <p className="text-lg font-semibold">{planDisplayName}</p>
         </div>
-        <Badge variant={isExpiredTrial ? "destructive" : "secondary"} className="text-xs">
-          {isExpiredTrial ? "Trial ended" : "Plan upgrades are coming soon"}
-        </Badge>
+        {plan === "starter" && <Badge variant="secondary">Free</Badge>}
+        {plan === "pro" && <Badge className="border-transparent bg-violet-50 text-violet-600">Pro</Badge>}
       </div>
 
-      {isExpiredTrial && (
-        <p className="rounded-lg bg-muted px-3 py-2 text-sm text-muted-foreground">
-          Your trial has ended. You can still view your existing Projects, Notes, and Documents —
-          new AI actions and Projects are paused. Upgrades are coming soon.
-        </p>
+      {plan === "starter" && anyLimitReached && (
+        <div className="flex flex-col gap-2 rounded-lg bg-muted px-3 py-2.5">
+          <p className="text-sm text-muted-foreground">
+            {aiActionsExhausted && "You've used all AI Actions available on Starter. "}
+            {transcriptionExhausted && "You've used all transcription minutes available on Starter. "}
+            {projectsExhausted && "You've reached your Starter project limit. "}
+            Upgrade to Pro for higher limits.
+          </p>
+          <Button asChild size="sm" className="w-fit">
+            <Link href="/upgrade">Upgrade to Pro</Link>
+          </Button>
+        </div>
       )}
 
       <div className="flex flex-col gap-4">
-        <p className="text-sm font-medium text-muted-foreground">Usage {trialStatus === "not_on_trial" ? "this month" : "this trial"}</p>
+        <p className="text-sm font-medium text-muted-foreground">
+          Usage {usagePeriod === "monthly" ? "this month" : ""}
+        </p>
 
         <UsageBar label="Projects" used={projects.used} limit={projects.limit} />
         <UsageBar label="AI Actions" used={aiActions.used} limit={aiActions.limit} />
@@ -56,10 +61,16 @@ export function UsagePanel({
       </div>
 
       <p className="text-xs text-muted-foreground">
-        {trialStatus === "not_on_trial"
-          ? `AI Actions and Transcription reset on ${formatShortDate(aiActions.resetsAt)}. Projects are a standing limit — delete one to free up space.`
-          : "AI Actions and Transcription are included for your whole trial period, not reset monthly. Projects are a standing limit — delete one to free up space."}
+        {usagePeriod === "monthly"
+          ? `AI Actions and Transcription reset on ${formatShortDate(aiActions.resetsAt ?? new Date().toISOString())}. Projects are a standing limit — delete one to free up space.`
+          : "AI Actions and Transcription are lifetime allowances for the Starter plan — they never reset. Projects are a standing limit — delete one to free up space."}
       </p>
+
+      {plan === "starter" && !anyLimitReached && (
+        <Button asChild variant="outline" size="sm" className="w-fit">
+          <Link href="/upgrade">Upgrade to Pro</Link>
+        </Button>
+      )}
     </div>
   );
 }

@@ -3,8 +3,9 @@
 import { useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { MoreVertical, Pencil, Trash2 } from "lucide-react";
+import { Folder, MoreVertical, Pencil, Trash2 } from "lucide-react";
 import { toast } from "sonner";
+import { cn } from "cn";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -15,6 +16,7 @@ import { Button } from "@/components/ui/button";
 import { ConfirmDialog } from "@/components/confirm-dialog";
 import { EditProjectDialog } from "@/components/projects/edit-project-dialog";
 import { formatRelativeTime } from "@/lib/utils/format";
+import { pickPastelTag } from "@/lib/utils/colorTag";
 import type { ProjectWithCounts } from "@/types";
 
 export function ProjectCard({ project: initialProject }: { project: ProjectWithCounts }) {
@@ -41,18 +43,30 @@ export function ProjectCard({ project: initialProject }: { project: ProjectWithC
   return (
     <div className="group relative rounded-xl border bg-card p-4 transition-colors hover:border-foreground/20">
       <Link href={`/projects/${project.id}`} className="block pr-8">
-        <h2 className="truncate font-semibold leading-snug">{project.name}</h2>
-        {project.description ? (
-          <p className="mt-1 line-clamp-2 text-sm text-muted-foreground">
-            {project.description}
-          </p>
-        ) : null}
-        <div className="mt-3 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
-          <span>{project.note_count} {project.note_count === 1 ? "note" : "notes"}</span>
-          <span aria-hidden>·</span>
-          <span>{project.document_count} {project.document_count === 1 ? "document" : "documents"}</span>
-          <span aria-hidden>·</span>
-          <span>Updated {formatRelativeTime(project.updated_at)}</span>
+        <div className="flex items-start gap-3">
+          <div
+            className={cn(
+              "flex size-9 shrink-0 items-center justify-center rounded-lg",
+              pickPastelTag(project.id)
+            )}
+          >
+            <Folder className="size-4" strokeWidth={2} />
+          </div>
+          <div className="min-w-0 flex-1">
+            <h2 className="truncate font-semibold leading-snug">{project.name}</h2>
+            {project.description ? (
+              <p className="mt-1 line-clamp-2 text-sm text-muted-foreground">
+                {project.description}
+              </p>
+            ) : null}
+            <div className="mt-3 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
+              <span>{project.note_count} {project.note_count === 1 ? "note" : "notes"}</span>
+              <span aria-hidden>·</span>
+              <span>{project.document_count} {project.document_count === 1 ? "document" : "documents"}</span>
+              <span aria-hidden>·</span>
+              <span>Updated {formatRelativeTime(project.updated_at)}</span>
+            </div>
+          </div>
         </div>
       </Link>
 

@@ -1,5 +1,7 @@
--- Manual RLS/security verification for
--- supabase/migrations/0009_provider_cost_budget.sql. Same begin/rollback
+-- Manual RLS/security verification for provider-cost budget functions, as
+-- updated by supabase/migrations/0014_starter_pro_plans.sql (both functions
+-- now take an explicit p_period_start instead of deriving it from trial
+-- columns internally — see lib/entitlements/period.ts). Same begin/rollback
 -- pattern as the other two verification files in this directory.
 
 begin;
@@ -12,7 +14,7 @@ insert into auth.users (id) values
   ('22222222-2222-2222-2222-222222222222')
 on conflict (id) do nothing;
 
-update profiles set plan_id = 'trial' where id = '11111111-1111-1111-1111-111111111111';
+update profiles set plan_id = 'starter' where id = '11111111-1111-1111-1111-111111111111';
 
 -- ---------------------------------------------------------------------------
 -- 1) No one (not even the owning user) can read provider_cost_reservations
@@ -44,23 +46,25 @@ end $$;
 reset role;
 
 -- ---------------------------------------------------------------------------
--- 2) reserve_provider_budget() blocks once the (trial) budget is exhausted,
--- and never lets the caller reserve on someone else's behalf (there is no
--- user_id parameter at all — auth.uid() is the only source).
+-- 2) reserve_provider_budget() blocks once the (Starter) budget is
+-- exhausted, and never lets the caller reserve on someone else's behalf
+-- (there is no user_id parameter at all — auth.uid() is the only source).
+-- p_period_start is caller-supplied (the app resolves it via
+-- getEntitlementPeriod()) — '-infinity' here matches Starter's lifetime cap.
 -- ---------------------------------------------------------------------------
 set local role authenticated;
 set local "request.jwt.claims" = '{"sub": "11111111-1111-1111-1111-111111111111"}';
 
-select (reserve_provider_budget('test', 0.10, 0.50)).reserved_cost_usd = 0.10 as first_reservation_ok;
+select (reserve_provider_budget('test', 0.10, 0.50, '-infinity'::timestamptz)).reserved_cost_usd = 0.10 as first_reservation_ok;
 -- Expect: true.
 
 do $$
 begin
-  perform reserve_provider_budget('test', 0.50, 0.50); -- 0.10 + 0.50 > 0.50
+  perform reserve_provider_budget('test', 0.50, 0.50, '-infinity'::timestamptz); -- 0.10 + 0.50 > 0.50
   raise exception 'SECURITY BUG: reservation exceeding budget was allowed';
 exception
   when others then
-    if sqlerrm = 'trial_budget_exhausted' then
+    if sqlerrm = 'provider_budget_exhausted' then
       raise notice 'OK: over-budget reservation correctly rejected';
     else
       raise;
@@ -108,17 +112,18 @@ select status from provider_cost_reservations where id = (select id from tmp_res
 reset role;
 
 -- ---------------------------------------------------------------------------
--- 4) get_provider_cost_total() only ever sums the CALLING user's own cost.
+-- 4) get_provider_cost_total() only ever sums the CALLING user's own cost,
+-- for whatever period_start it's given.
 -- ---------------------------------------------------------------------------
 set local role authenticated;
 set local "request.jwt.claims" = '{"sub": "11111111-1111-1111-1111-111111111111"}';
 select reconcile_provider_reservation((select id from tmp_reservation), 0.04);
-select get_provider_cost_total() as user_a_total; -- expect: 0.04
+select get_provider_cost_total('-infinity'::timestamptz) as user_a_total; -- expect: 0.04
 reset role;
 
 set local role authenticated;
 set local "request.jwt.claims" = '{"sub": "22222222-2222-2222-2222-222222222222"}';
-select get_provider_cost_total() as user_b_total; -- expect: 0, never sees User A's 0.04
+select get_provider_cost_total('-infinity'::timestamptz) as user_b_total; -- expect: 0, never sees User A's 0.04
 reset role;
 
 -- ---------------------------------------------------------------------------

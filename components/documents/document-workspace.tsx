@@ -26,6 +26,8 @@ import { LinkedInPostEditor } from "@/components/documents/linkedin-post-editor"
 import { CopyButton } from "@/components/documents/copy-button";
 import { SeoKeywordLegend } from "@/components/documents/seo-keyword-legend";
 import { AddSeoKeywordsPanel } from "@/components/documents/add-seo-keywords-panel";
+import { SeoMetadataEditor } from "@/components/documents/seo/seo-metadata-editor";
+import { DOCUMENT_TYPE_ICON_CONFIG } from "@/components/documents/document-type-icon";
 import { useAutosave } from "@/hooks/use-autosave";
 import { formatRelativeTime } from "@/lib/utils/format";
 import { resolveDocumentPresetSnapshot } from "@/lib/writing-engine/snapshot";
@@ -81,7 +83,7 @@ export function DocumentWorkspace({
       const res = await fetch(`/api/documents/${initialDocument.id}/versions`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ content }),
+        body: JSON.stringify({ content, seoSettings: isArticle ? seoKeywords : undefined }),
       });
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
@@ -124,6 +126,7 @@ export function DocumentWorkspace({
     }
     const { version } = await res.json();
     setContent(version.content);
+    if (isArticle) setSeoKeywords(resolveDocumentSeoConfig({ seo_settings: version.seo_settings }));
     setVersions((prev) => [version, ...prev]);
     toast.success(`Restored — new version v${version.version_number}`);
   }
@@ -148,7 +151,9 @@ export function DocumentWorkspace({
     <div className="flex flex-col gap-6">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="flex flex-wrap items-center gap-2">
-          <Badge variant="secondary">{DOCUMENT_TYPE_LABELS[initialDocument.type]}</Badge>
+          <Badge className={cn("border-transparent", DOCUMENT_TYPE_ICON_CONFIG[initialDocument.type].badgeClassName)}>
+            {DOCUMENT_TYPE_LABELS[initialDocument.type]}
+          </Badge>
           <Badge variant="outline">{presetSnapshot.name}</Badge>
           <span className="text-xs text-muted-foreground">
             Updated {formatRelativeTime(initialDocument.updated_at)}
@@ -208,12 +213,22 @@ export function DocumentWorkspace({
             />
           </>
         ) : isArticle ? (
-          <div className="flex flex-col gap-3">
-            {seoKeywords ? (
-              <SeoKeywordLegend content={content} seoKeywords={seoKeywords} />
-            ) : (
-              <AddSeoKeywordsPanel documentId={initialDocument.id} onSaved={setSeoKeywords} />
-            )}
+          <div className="flex flex-col gap-4">
+            <div className="flex flex-col gap-3">
+              {seoKeywords ? (
+                <SeoKeywordLegend content={content} seoKeywords={seoKeywords} />
+              ) : (
+                <AddSeoKeywordsPanel documentId={initialDocument.id} onSaved={setSeoKeywords} />
+              )}
+              {seoKeywords ? (
+                <SeoMetadataEditor
+                  documentId={initialDocument.id}
+                  documentTitle={title}
+                  seoKeywords={seoKeywords}
+                  onSeoKeywordsChange={setSeoKeywords}
+                />
+              ) : null}
+            </div>
             <div className="rounded-xl border bg-muted/20 px-3 py-5 sm:px-6">
               {/* Remount when keywords first appear (e.g. via "Add SEO Keywords" on a legacy
                   Article) — ArticleEditor freezes its highlight extension at mount time,

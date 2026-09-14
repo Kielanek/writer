@@ -61,11 +61,14 @@ export interface Document {
   preset_snapshot: unknown;
   writing_engine_version: number;
   /**
-   * Frozen SEO keyword configuration — every Article is SEO-focused, so
-   * every new `article` Document carries one. Raw JSONB — see
+   * Frozen SEO configuration — primaryKeyword, secondaryKeywords, and
+   * (once generated or manually entered) metaTitle/metaDescription for the
+   * Google search-result preview. Every Article is SEO-focused, so every new
+   * `article` Document carries one. Raw JSONB — see
    * lib/writing-engine/seoKeywords.ts for typed access. Null for every
    * non-article type, and for Articles created before SEO keywords became
-   * mandatory (legacy — still opens normally, just with no highlighting).
+   * mandatory (legacy — still opens normally, just with no highlighting/meta
+   * editor until keywords are added).
    */
   seo_settings: unknown;
   created_at: string;
@@ -81,6 +84,8 @@ export interface DocumentVersion {
   source: DocumentVersionSource;
   instruction: string | null;
   restored_from_version: number | null;
+  /** Frozen SEO state (see Document.seo_settings) at the moment this version was created. Null for non-Article Documents and for versions created before this existed. */
+  seo_settings: unknown;
   created_at: string;
 }
 

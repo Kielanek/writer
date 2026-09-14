@@ -72,7 +72,12 @@ export async function createDocument(input: {
 /** Autosave-only update. Does NOT create a version history entry. */
 export async function updateDocumentContent(
   documentId: string,
-  input: { title?: string; content?: string; seoSettings?: unknown }
+  input: {
+    title?: string;
+    content?: string;
+    /** Full SEO config (primaryKeyword, secondaryKeywords, metaTitle, metaDescription) — always the whole object, never a partial merge; see lib/writing-engine/seoKeywords.ts. */
+    seoSettings?: unknown;
+  }
 ): Promise<Document> {
   const supabase = await getSupabaseServerClient();
   const user = await requireUser();
@@ -160,6 +165,8 @@ export async function createDocumentVersion(input: {
   source: DocumentVersionSource;
   instruction?: string | null;
   restoredFromVersion?: number | null;
+  /** Snapshots the Article's current SEO state (keywords + meta title/description) onto this version, and — via create_document_version()'s coalesce — applies it back to the live document too. Pass the version being restored FROM to make "Restore" bring SEO state back with it; pass the document's current seo_settings for an ordinary save/edit (a no-op merge). Omit entirely for non-Article Documents. */
+  seoSettings?: unknown;
 }): Promise<DocumentVersion> {
   const supabase = await getSupabaseServerClient();
   const { data, error } = await supabase
@@ -169,6 +176,7 @@ export async function createDocumentVersion(input: {
       p_source: input.source,
       p_instruction: input.instruction ?? null,
       p_restored_from_version: input.restoredFromVersion ?? null,
+      p_seo_settings: input.seoSettings ?? null,
     })
     .single();
 

@@ -7,8 +7,11 @@ history, and a project-scoped "Ask Project" chat.
 
 Multi-user with Supabase Auth: every Project, Note, Document, Version, Chat
 message, and custom Writing Preset belongs to exactly one account, enforced
-by Row Level Security — not just application code. No payments or usage
-limits yet.
+by Row Level Security — not just application code. Every account starts on
+a free **Starter** plan with lifetime usage limits; a **Pro** plan with
+larger monthly limits is available through a demo-only upgrade flow (no
+Stripe, no real payment processing — see [Plans and usage limits](#plans-and-usage-limits)
+below).
 
 ## Stack
 
@@ -21,38 +24,23 @@ Next.js (App Router) + TypeScript + Tailwind + shadcn/ui + Supabase
 
 Create a project at [supabase.com](https://supabase.com), then open the SQL
 Editor and run every file in `supabase/migrations/` **in order**
-(`0001_init.sql` through `0013_allow_zero_cost_usage_events.sql`).
+(`0001_init.sql` through `0014_starter_pro_plans.sql`).
 `0006_auth_and_rls.sql` is the Auth migration — it adds `user_id` ownership
 columns, indexes, and Row Level Security policies to every user-owned
 table, and updates `create_document_version` to enforce and stamp
 ownership. `0007_usage_limits.sql` is the Usage/Limits migration — see
-[Usage limits](#usage-limits) below. `0008` is a required bugfix for
-`0007`'s `create_project_with_limit()` function (it needs
-`SECURITY DEFINER`, not `SECURITY INVOKER`, to be able to insert into
+[Plans and usage limits](#plans-and-usage-limits) below. `0008` is a
+required bugfix for `0007`'s `create_project_with_limit()` function (it
+needs `SECURITY DEFINER`, not `SECURITY INVOKER`, to be able to insert into
 `projects` after that same migration revokes direct `INSERT` on it) — don't
-skip it. `0009_provider_cost_budget.sql` adds the real-dollar trial cost
-budget — see [Provider cost budget (trial safety cap)](#provider-cost-budget-trial-safety-cap)
-below. `0010_admin_trial_config.sql` adds the Admin Panel's DB-backed Trial
-configuration, trial period dates, and switches new-signup default to
-`trial` — see [Admin Panel](#admin-panel) below. `0011` and `0012` are both
-required bugfixes for `0010`'s `plan_configs` table: `0010` enabled RLS on
-it but left it with neither a `SELECT` grant nor a policy for
-`authenticated`, so every trial-limit read via the ordinary session client
-silently fell back to code-defined defaults instead of the admin-configured
-values — `0011` adds the missing `GRANT`, `0012` adds the missing `POLICY`
-(RLS denies all rows with zero policies even once the grant exists — the
-grant alone isn't sufficient). Don't skip either. `0013_allow_zero_cost_usage_events.sql`
-fixes a real crash (not just a documentation gap): `usage_events.quantity`
-had `check (quantity > 0)`, but the provider-cost-budget code in
-`lib/entitlements/reservation.ts` deliberately records a legitimate `$0`
-usage event when a model has no pricing entry and the current plan has no
-cost cap to protect (e.g. `development`/`pro` plans using the
-currently-configured `whisper-1` transcription model, which has no
-verified price — see [Provider cost budget](#provider-cost-budget-trial-safety-cap)
-below). That `$0` insert violated the constraint and crashed **every**
-transcription request on **any** plan with a 500, after the real (billable)
-OpenAI call had already succeeded. `0013` relaxes the constraint to
-`quantity >= 0`. Don't skip it.
+skip it. `0009_provider_cost_budget.sql` adds the real-dollar provider-cost
+safety cap — see [Provider cost budget](#provider-cost-budget) below.
+`0010`-`0013` built out the original (now superseded) Trial model's DB-backed
+plan configuration and admin panel; `0014_starter_pro_plans.sql` **replaces
+the time-boxed Trial plan with a permanent, free Starter plan plus a
+demo-only Pro upgrade** — see [Plans and usage limits](#plans-and-usage-limits)
+and [Upgrade flow (demo only)](#upgrade-flow-demo-only) below. Don't skip
+any of them; each is additive/corrective over the last.
 
 ### 2. Configure environment variables
 
@@ -142,14 +130,31 @@ running it again only ever picks up rows still unclaimed.
   update rejected) — paste it into the SQL Editor and run it. It's wrapped
   in `begin`/`rollback`, so it never leaves any test data behind.
 
-## Usage limits
+## Plans and usage limits
 
-Every account has a plan (`development` or `pro`, code-defined in
-`lib/entitlements/plans.ts`) with three limits: max Projects, AI Actions per
-calendar month, and transcription minutes per calendar month. No Stripe yet
-— every new signup gets the `development` plan automatically (via a
-Postgres trigger, see below), and its limits are deliberately generous for
-testing, not final pricing.
+Three plans, resolved centrally by `lib/entitlements/plans.ts`'s
+`getPlanLimits()`:
+
+- **Starter** — free, no time limit, DB-backed (`plan_configs`, admin-editable
+  — see [Admin Panel](#admin-panel)). Limits are **lifetime**: 3 Projects, 10
+  AI Actions, 20 transcription minutes, $0.50 internal provider-cost cap,
+  summed since account creation and **never reset** on a calendar boundary.
+  Every new signup gets Starter automatically (via a Postgres trigger, see
+  below).
+- **Pro** — also DB-backed/admin-editable, larger **calendar-month** limits
+  (25 Projects, 300 AI Actions/month, 180 transcription minutes/month, no
+  cost cap) plus a demo commercial price (PLN/month). Reached only through
+  the [demo upgrade flow](#upgrade-flow-demo-only) — no Stripe, no real
+  payment processing.
+- **Development** — code-defined in `lib/entitlements/plans.ts`, generous and
+  uncapped, for the maintainer's own account. Not admin-editable and not a
+  product plan a normal signup ever gets.
+
+There is no time-based expiration anywhere in this model — the old 7-day
+Trial concept has been fully removed from the active product (see
+`supabase/migrations/0014_starter_pro_plans.sql`). A Starter account simply
+keeps working forever, blocked only by its lifetime usage numbers, until it
+upgrades.
 
 **What counts as an AI Action** (1 action each): Generate Document, AI Edit,
 Ask Project, Analyze Writing Examples. Note title/description generation
@@ -173,8 +178,17 @@ documented MVP tradeoff (see `checkTranscriptionAllowance()` in
 hardcodes a threshold. A blocked action returns HTTP 429 with
 `{"error": "usage_limit_reached", "resource": ..., "used": ..., "limit": ..., "resetsAt": ...}`
 (mapped centrally in `lib/utils/api.ts`), and the UI shows a plain message
-("You've reached your monthly AI limit. Plan upgrades are coming soon.")
-rather than that raw code — see `lib/utils/apiError.ts`.
+plus an "Upgrade to Pro" CTA rather than that raw code — see
+`lib/utils/apiError.ts`. `resetsAt` is `null` for a lifetime-scoped resource
+(Starter, Development) — the UI must treat that as "no countdown," not try
+to format it as a date.
+
+**Usage periods are centralized**: `lib/entitlements/period.ts`'s
+`getEntitlementPeriod()` is the one place "which usage counts right now" is
+decided — Starter/Development sum everything since the epoch (i.e. all of
+it, forever); Pro uses the current calendar month, floored at the account's
+`plan_changed_at` so a fresh upgrade never inherits usage recorded before
+it (see [Upgrade flow](#upgrade-flow-demo-only)).
 
 **Concurrency**: Project creation is fully race-proof — the
 `create_project_with_limit()` Postgres function (in
@@ -190,10 +204,13 @@ flight at once. Documented rather than solved with a full reservation
 ledger, which is out of scope for this MVP.
 
 **New/existing users automatically get a plan**: a `handle_new_user()`
-trigger on `auth.users` creates a `profiles` row (`plan_id = 'development'`)
-for every signup, and the migration backfills one for every account that
-already existed. `getUserPlan()` also has a defensive fallback to the
-default plan if a profile is ever missing, so this can never hard-fail a
+trigger on `auth.users` creates a `profiles` row — `plan_id = 'starter'` as
+of `0014_starter_pro_plans.sql` (originally `'development'`, then `'trial'`
+under the now-removed Trial model). The migration only changes what happens
+on a *new* signup; every pre-existing account keeps whatever `plan_id` it
+already had (existing Trial accounts were migrated to `starter` explicitly
+— see `0014`). `getUserPlan()` also has a defensive fallback to
+`development` if a profile is ever missing, so this can never hard-fail a
 request.
 
 Verify with `supabase/tests/usage_rls_verification.sql` (same
@@ -203,27 +220,27 @@ plan/usage and never another user's, cannot change their own `plan_id`
 INSERT grant), `anon` has no access at all, and the project-limit RPC both
 assigns ownership correctly and blocks at the limit.
 
-## Provider cost budget (trial safety cap)
+## Provider cost budget
 
-On top of the product-facing limits above, the `trial` plan carries a
-**hard internal cap on real OpenAI spend for text generation**
-(`apiCostBudgetUsd: 0.50` in `lib/entitlements/plans.ts`) — a trial
-account can never cost meaningfully more than about $0.50 in actual
-text-generation provider fees. This is entirely internal: the user only
-ever sees the friendly limits (Projects, AI Actions, Transcription
-minutes) — never a dollar figure, never anything resembling "you cost us
-$0.37."
+On top of the product-facing limits above, Starter carries a **hard
+internal cap on real OpenAI spend for text generation**
+(`apiCostBudgetUsd: 0.50`, DB-backed and admin-editable — see
+[Admin Panel](#admin-panel)) — a Starter account can never cost meaningfully
+more than about $0.50 in actual text-generation provider fees, for the
+lifetime of the account. This is entirely internal: the user only ever sees
+the friendly limits (Projects, AI Actions, Transcription minutes) — never a
+dollar figure, never anything resembling "you cost us $0.37." Pro has no
+cost cap by default (admin-configurable).
 
-**Transcription is deliberately excluded from this $ budget** — it's
-gated purely by the 120-minutes/month product limit
-(`transcriptionMinutesPerMonth`, enforced by `checkTranscriptionAllowance()`
-in `lib/entitlements/usage.ts`). `guardedTranscribeAudio()` in
-`lib/ai/guarded.ts` does not reserve, estimate, or record a $ cost at all;
-it only checks that the trial hasn't expired. This was a deliberate
-product decision: the currently-configured `OPENAI_TRANSCRIPTION_MODEL`
-(`whisper-1`) has no verified pricing (see `provider-pricing.ts`), and
-rather than chase down real `whisper-1` pricing or switch models, minutes
-alone are treated as a sufficient trial safety cap for transcription.
+**Transcription is deliberately excluded from this $ budget** — it's gated
+purely by the product-facing transcription-minutes limit (enforced by
+`checkTranscriptionAllowance()` in `lib/entitlements/usage.ts`).
+`guardedTranscribeAudio()` in `lib/ai/guarded.ts` does not reserve, estimate,
+or record a $ cost at all. This was a deliberate product decision: the
+currently-configured `OPENAI_TRANSCRIPTION_MODEL` (`whisper-1`) has no
+verified pricing (see `provider-pricing.ts`), and rather than chase down
+real `whisper-1` pricing or switch models, minutes alone are treated as a
+sufficient safety cap for transcription.
 
 **Pricing config**: `lib/entitlements/provider-pricing.ts` is the *only*
 place per-token/per-minute prices live. Currently priced: `gpt-5.6-terra`
@@ -233,12 +250,12 @@ but nothing currently calls it — see the transcription note above.
 
 **Unknown model safety (text generation only)**: a cost calculation for a
 model with no pricing entry throws (`UnknownModelPricingError`) rather
-than silently returning $0. For a plan with no cost cap (development,
-pro), that's caught, logged, and the action proceeds anyway (nothing to
-protect). For a cost-capped plan (trial), it's NOT caught — the action is
-blocked and the error is logged server-side, since allowing an unpriced
-model through would silently defeat the entire budget. This path no
-longer applies to transcription at all (see above).
+than silently returning $0. For a plan with no cost cap (development, pro
+by default), that's caught, logged, and the action proceeds anyway (nothing
+to protect). For a cost-capped plan (Starter), it's NOT caught — the action
+is blocked and the error is logged server-side, since allowing an unpriced
+model through would silently defeat the entire budget. This path no longer
+applies to transcription at all (see above).
 
 **Pre-call reservation, not just post-call accounting**: every text-generation
 call made by a cost-capped plan reserves a conservative worst-case cost
@@ -260,31 +277,32 @@ by an automatic keyword-repair pass) — every actual call's real cost is
 tracked as its own `provider_cost` usage event, independent of the single
 `ai_action` product-counter event the user sees. The same split covers
 fully automatic calls that never count as an AI Action at all (note
-title/description generation) — their cost still counts against the trial
-budget, it's just invisible in the "AI Actions used" counter. See
+title/description generation) — their cost still counts against the
+Starter budget, it's just invisible in the "AI Actions used" counter. See
 `lib/ai/guarded.ts`'s module doc for the full reasoning.
 
-**Budget period**: the $0.50 budget is NOT calendar-month scoped like the
-product limits — it would be a loophole for a trial account to get another
-$0.50 just because the month rolled over. It's summed since the account's
-`profiles.created_at`, a temporary stand-in for the not-yet-built
-`trial_started_at`/`trial_ends_at` (see `get_provider_cost_total()` and
-`reserve_provider_budget()`'s doc comments) — swapping to a real trial
-period later only changes that one column reference.
+**Budget period**: for Starter, the $0.50 budget is a lifetime cap, exactly
+like its other limits — it never resets on a calendar boundary. `get_provider_cost_total()`
+and `reserve_provider_budget()` (Postgres) take an explicit `p_period_start`
+computed by `lib/entitlements/period.ts`'s `getEntitlementPeriod()`, the
+same function every other usage check goes through — the epoch for
+Starter/Development, the current (plan-change-floored) calendar month for
+Pro.
 
-**Assigning the trial plan** (no Stripe/signup automation yet):
+**Assigning a plan manually** (no Stripe/signup automation for Pro; use the
+[demo upgrade flow](#upgrade-flow-demo-only) for a realistic self-service
+test instead):
 
 ```bash
-npm run set-user-plan -- <USER_UUID> trial
+npm run set-user-plan -- <USER_UUID> starter
 npm run set-user-plan -- <USER_UUID> development   # switch back
 ```
 
 Your own development account stays on `development` (no cost cap) unless
-you explicitly run this. **As of `0010_admin_trial_config.sql`, every NEW
-signup defaults to `trial` automatically** — see
-[Admin Panel](#admin-panel) below; `set-user-plan` is now mainly useful for
-switching an existing account, or for your own dev account if you ever
-need to test as a trial user.
+you explicitly run this. **Every NEW signup defaults to `starter`
+automatically** — see [Admin Panel](#admin-panel) below; `set-user-plan` is
+now mainly useful for switching an existing account, or for your own dev
+account if you ever need to test as a Starter user.
 
 Verify with `supabase/tests/provider_cost_rls_verification.sql`: no one
 (not even the owning user) can read `provider_cost_reservations` directly,
@@ -293,10 +311,47 @@ reconcile/release someone else's reservation, `get_provider_cost_total()`
 only ever sums the caller's own cost, and `plan_id` still can't be changed
 by the client.
 
+## Upgrade flow (demo only)
+
+`/upgrade` — a plain Starter-vs-Pro comparison (limits + demo PLN/month
+price, read from the same `plan_configs` Admin edits) with an **"Upgrade to
+Pro"** button for Starter accounts.
+
+**This is a demo, not a real payment flow — and it must stay that way**: no
+Stripe, no PayPal, no real card processing, no invoices, no real
+subscriptions, no billing webhooks. Clicking "Upgrade to Pro" opens a
+"Demo Checkout" dialog (`components/upgrade/demo-checkout-dialog.tsx`) that
+says outright "This is a demo. No real payment will be processed," shows a
+**fixed, read-only** "Demo card ending in 4242" (never an editable card
+input — there is nothing to type, so there is nothing to collect, log, or
+leak), and a "Confirm Demo Upgrade" button.
+
+**Server-side security** (`app/api/upgrade/demo-checkout/route.ts`):
+requires an authenticated session, derives the acting user *exclusively*
+from that session (there is no `userId` field in the request at all — it
+cannot upgrade anyone else), and only ever allows `starter -> pro` — an
+already-Pro or Development caller gets a 400, and there is no way to reach
+`development` through this route. The actual mutation goes through
+`lib/entitlements/planChange.ts`'s `applyPlanChange()` — a single service
+boundary that also writes a `plan_change_audit` row (`user_id, from_plan,
+to_plan, source, created_at`). A real Stripe webhook later calls this exact
+same function instead of touching `profiles` directly, so Starter/Pro
+limits, the entitlement engine, the Account UI, and Admin never need to
+change when Stripe arrives.
+
+**Usage transition on upgrade**: `applyPlanChange()` stamps
+`profiles.plan_changed_at = now()`. Pro's monthly usage period is floored at
+that timestamp (see `getEntitlementPeriod()`), so a user who used up all 10
+Starter AI Actions and then upgrades immediately sees `0 / 300` on Pro —
+their lifetime Starter usage is preserved in `usage_events` (nothing is ever
+erased) but does not count against the new Pro period. Existing Projects
+still count toward Pro's (higher) project limit, since that's a standing
+resource count, not a period-scoped quota.
+
 ## Admin Panel
 
-`/admin` — Trial configuration and a registered-users list, visible only to
-authorized admin accounts.
+`/admin` — Plan configuration (Starter and Pro limits/price, DB-backed) and
+a registered-users list, visible only to authorized admin accounts.
 
 **Authorization**: a server-only `ADMIN_USER_IDS` env var (comma-separated
 Supabase auth user UUIDs), checked against the *validated* session user id
@@ -309,32 +364,31 @@ a user's UUID from Supabase Dashboard -> Authentication -> Users, and put
 it in `ADMIN_USER_IDS` in `.env.local` (comma-separate multiple admins).
 Your own account is already there if you ran this session's setup.
 
-**New signups now default to `trial`**, not `development` — the
-`handle_new_user()` trigger (updated in `0010_admin_trial_config.sql`) sets
-`plan_id = 'trial'`, `trial_started_at = now()`, and `trial_ends_at = now()
-+ (current plan_configs.trial_days)` on every new `auth.users` row. Nothing
-retroactive: every account that already existed (including yours) keeps
-whatever `plan_id` it already had.
+**New signups now default to `starter`** — the `handle_new_user()` trigger
+(updated in `0014_starter_pro_plans.sql`) sets `plan_id = 'starter'` and
+stamps `plan_changed_at` on every new `auth.users` row. Nothing retroactive:
+every account that already existed (including yours) keeps whatever
+`plan_id` it already had; every account previously on the removed Trial
+plan was migrated to `starter` by the same migration, preserving all usage
+history.
 
-**Trial limits are DB-backed** (`plan_configs` table, one row for
-`plan_id = 'trial'`) and admin-editable from the Trial Settings form —
-`development`/`pro` stay code-defined in `lib/entitlements/plans.ts` on
-purpose (developer-controlled, not an admin-editable product limit, and
-this way local dev is never blocked on a database row existing). A change
-to Projects/AI Actions/Transcription/Cost Cap applies to every *current*
-trial account immediately (remaining allowance is always `limit − usage`,
-computed fresh on every check — there's no per-user snapshot to
-invalidate). Changing the trial **duration** only affects brand-new
-signups; an existing trial account's `trial_ends_at` is fixed at signup and
-is never silently rewritten.
+**Starter and Pro limits are both DB-backed** (`plan_configs` table, one row
+each) and admin-editable from the Plan Settings form —
+`development` stays code-defined in `lib/entitlements/plans.ts` on purpose
+(developer-controlled, not an admin-editable product limit, and this way
+local dev is never blocked on a database row existing). A change to
+Projects/AI Actions/Transcription/Cost Cap/Price applies to every *current*
+account on that plan immediately (remaining allowance is always `limit −
+usage`, computed fresh on every check — there's no per-user snapshot to
+invalidate).
 
-**Trial expiry**: once `now() >= trial_ends_at`, `lib/entitlements/trial.ts`'s
-`getTrialStatus()` reports `"expired"`, and `assertTrialActive()` blocks
-every entitlement-gated action (AI operations, project creation) with a
-structured `{"error": "trial_expired"}` (403) — shown to the user as "Your
-trial has ended." Existing Projects/Notes/Documents remain fully readable;
-only *new* actions are blocked. No Stripe/upgrade flow yet — a subtle
-"Plan upgrades are coming soon" state is all that's shown.
+**No time-based expiry of any kind** — Starter has no end date; the old
+`lib/entitlements/trial.ts` (`getTrialStatus()`/`assertTrialActive()`) has
+been deleted entirely. Once a Starter limit is reached, only the specific
+gated action (Generate, AI Edit, Ask Project, Analyze Examples, new
+transcription, new Project) is blocked — existing Projects/Notes/Documents
+remain fully readable and editable (where no AI call is involved), and the
+UI shows an "Upgrade to Pro" CTA (see [Upgrade flow](#upgrade-flow-demo-only)).
 
 **User list**: sourced from the GoTrue Admin API (`auth.users` — id, email,
 created_at, last_sign_in_at) merged server-side with `profiles` and each
@@ -354,21 +408,25 @@ blocks the 11th action sees 7/10" can't diverge. Internal provider cost
 (`$0.1834 / $0.50`) IS shown here, admin-only — `GET /api/usage` (the
 normal Account page) strips it before responding.
 
-**Audit log**: every Trial Settings change and manual plan override writes
-an `admin_audit_log` row (`{admin_user_id, action, metadata: {before,
-after}}`) via the admin client — no UI for it yet (`select * from
-admin_audit_log order by created_at desc` in the SQL editor if needed).
+**Audit log**: every Plan Settings change and manual plan override writes an
+`admin_audit_log` row (`{admin_user_id, action, metadata: {before, after}}`)
+via the admin client; every demo (and future real) plan activation writes a
+separate `plan_change_audit` row (see [Upgrade flow](#upgrade-flow-demo-only)).
+Neither has a UI yet (`select * from admin_audit_log order by created_at desc`
+/ `select * from plan_change_audit order by created_at desc` in the SQL
+editor if needed).
 
-**Manual plan override** (User Detail page, Set Plan: Trial/Development) is
-for testing — not a general plan editor; paid plans arrive with Stripe
-later. Switching to Trial starts a fresh trial period from the current
-`trial_days` setting; switching to Development clears trial dates entirely.
+**Manual plan override** (User Detail page, Set Plan: Starter/Pro/Development)
+is for testing — not the demo upgrade's self-service path. Unlike the demo
+upgrade endpoint, Admin can set ANY plan on ANY user, including
+Development. Setting Starter or Pro stamps a fresh `plan_changed_at`
+(so a manually-set Pro account's monthly period starts from that moment).
 
 Verify with `supabase/tests/admin_rls_verification.sql`: `plan_configs` is
-readable but never writable by `authenticated`, `admin_audit_log` has zero
-access for anyone but the admin/secret client, `profiles`' trial columns
-still can't be touched by the client, and a fresh signup gets `trial` +
-both trial dates automatically.
+readable but never writable by `authenticated`, `admin_audit_log` and
+`plan_change_audit` have zero access for anyone but the admin/secret
+client, `profiles.plan_id`/`plan_changed_at` still can't be touched by the
+client, and a fresh signup gets `starter` automatically.
 
 ## Checks
 

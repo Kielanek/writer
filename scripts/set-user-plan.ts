@@ -10,19 +10,19 @@
  * fully out-of-band operation). It only ever runs from a developer's own
  * machine/CI, never in response to an HTTP request.
  *
- * This is a deliberately manual stand-in for what a future Stripe
- * webhook/trial-signup flow will do automatically (see
- * lib/entitlements/plans.ts's doc comment on the `trial` plan).
+ * This is a deliberately manual stand-in for what a future Stripe webhook
+ * will do automatically (see lib/entitlements/planChange.ts's
+ * applyPlanChange() — the same service boundary a webhook will call).
  *
  * Usage:
  *
- *   npm run set-user-plan -- <USER_UUID> <development|trial|pro>
+ *   npm run set-user-plan -- <USER_UUID> <development|starter|pro>
  */
 import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { createClient } from "@supabase/supabase-js";
 
-const VALID_PLAN_IDS = ["development", "trial", "pro"];
+const VALID_PLAN_IDS = ["development", "starter", "pro"];
 
 function loadDotEnvLocal() {
   const path = resolve(process.cwd(), ".env.local");
@@ -49,7 +49,7 @@ async function main() {
   const [userId, planId] = process.argv.slice(2);
 
   if (!userId || !isValidUuid(userId) || !planId || !VALID_PLAN_IDS.includes(planId)) {
-    console.error("Usage: npm run set-user-plan -- <USER_UUID> <development|trial|pro>");
+    console.error("Usage: npm run set-user-plan -- <USER_UUID> <development|starter|pro>");
     console.error("\nGet a user's UUID from Supabase Dashboard -> Authentication -> Users.");
     process.exit(1);
   }
@@ -85,7 +85,7 @@ async function main() {
 
   const { error: updateError } = await supabase
     .from("profiles")
-    .update({ plan_id: planId })
+    .update({ plan_id: planId, plan_changed_at: new Date().toISOString() })
     .eq("id", userId);
 
   if (updateError) {

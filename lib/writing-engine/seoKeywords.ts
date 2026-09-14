@@ -12,10 +12,23 @@ export const seoKeywordSchema = z.string().trim().min(1, "Keyword cannot be empt
 
 export const MAX_SECONDARY_KEYWORDS = 10;
 
+/**
+ * Soft caps only — not Google display limits (Google doesn't define strict
+ * ones; truncation is visual-width-based, see components/documents/seo/).
+ * Just generous enough to block pathological input, e.g. someone pasting a
+ * whole paragraph into the Meta Title field.
+ */
+const META_TITLE_MAX = 300;
+const META_DESCRIPTION_MAX = 500;
+
 export const seoKeywordConfigSchema = z
   .object({
     primaryKeyword: seoKeywordSchema,
     secondaryKeywords: z.array(seoKeywordSchema).max(MAX_SECONDARY_KEYWORDS).default([]),
+    /** Google-search meta title — optional: absent until generated or manually entered. See components/documents/seo/seo-metadata-editor.tsx. */
+    metaTitle: z.string().trim().max(META_TITLE_MAX).optional(),
+    /** Google-search meta description — same scope as metaTitle. Plain text only, no Markdown. */
+    metaDescription: z.string().trim().max(META_DESCRIPTION_MAX).optional(),
   })
   .superRefine((value, ctx) => {
     const seen = new Set<string>();

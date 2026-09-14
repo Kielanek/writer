@@ -71,7 +71,6 @@ export function UsersTable({ initialUsers, initialTotal }: { initialUsers: Admin
               <th className="px-3 py-2 font-medium">User</th>
               <th className="px-3 py-2 font-medium">Created</th>
               <th className="px-3 py-2 font-medium">Plan</th>
-              <th className="px-3 py-2 font-medium">Trial Ends</th>
               <th className="px-3 py-2 font-medium">Projects</th>
               <th className="px-3 py-2 font-medium">AI Actions</th>
               <th className="px-3 py-2 font-medium">Transcription</th>
@@ -82,7 +81,7 @@ export function UsersTable({ initialUsers, initialTotal }: { initialUsers: Admin
           <tbody>
             {rows.length === 0 && (
               <tr>
-                <td colSpan={9} className="px-3 py-6 text-center text-muted-foreground">
+                <td colSpan={8} className="px-3 py-6 text-center text-muted-foreground">
                   {loading ? "Loading..." : "No users found."}
                 </td>
               </tr>
@@ -98,10 +97,7 @@ export function UsersTable({ initialUsers, initialTotal }: { initialUsers: Admin
                   {formatShortDate(row.createdAt)}
                 </td>
                 <td className="px-3 py-2">
-                  <PlanStatusBadge planId={row.planId} trialStatus={row.trialStatus} />
-                </td>
-                <td className="px-3 py-2 whitespace-nowrap text-muted-foreground">
-                  {row.trialEndsAt ? formatShortDate(row.trialEndsAt) : "—"}
+                  <PlanStatusBadge planId={row.planId} />
                 </td>
                 <td className="px-3 py-2 whitespace-nowrap tabular-nums">
                   {row.entitlements.projects.used} / {row.entitlements.projects.limit}

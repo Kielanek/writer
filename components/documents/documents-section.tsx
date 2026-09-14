@@ -20,7 +20,7 @@ export function DocumentsSection({
         action={
           <Button asChild size="sm" variant="outline">
             <Link href={`/projects/${projectId}/documents/new`}>
-              <Plus className="size-4" />
+              <Plus className="size-4 text-emerald-600" />
               Create Document
             </Link>
           </Button>
@@ -29,7 +29,9 @@ export function DocumentsSection({
 
       {documents.length === 0 ? (
         <div className="flex flex-col items-center gap-2 rounded-xl border border-dashed py-10 text-center">
-          <Sparkles className="size-6 text-muted-foreground" />
+          <div className="flex size-10 items-center justify-center rounded-full bg-fuchsia-50 text-fuchsia-500">
+            <Sparkles className="size-5" />
+          </div>
           <p className="text-sm text-muted-foreground">
             No documents yet. Turn your notes into something useful.
           </p>

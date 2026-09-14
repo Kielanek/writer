@@ -117,7 +117,7 @@ export const createDocumentSchema = z
 export const updateDocumentSchema = z.object({
   title: z.string().trim().max(300).optional(),
   content: z.string().trim().max(200_000).optional(),
-  /** Lets a legacy Article (created before SEO keywords were mandatory) add them after the fact. */
+  /** Full SEO config — keywords + meta title/description together (see lib/writing-engine/seoKeywords.ts). Lets a legacy Article (created before SEO keywords were mandatory) add them after the fact, and lets the SEO Meta editor autosave metaTitle/metaDescription by resending the whole object it already holds in memory. */
   seoSettings: seoKeywordConfigSchema.optional(),
 });
 
@@ -178,6 +178,8 @@ export const analyzeExamplesSchema = z
 
 export const saveVersionSchema = z.object({
   content: z.string().trim().max(200_000).optional(),
+  /** Snapshots the client's current SEO state onto this version instead of whatever's already persisted — avoids a race with the SEO Meta editor's own debounced autosave, same reasoning as `content` above. */
+  seoSettings: seoKeywordConfigSchema.optional(),
 });
 
 export const restoreVersionSchema = z.object({
@@ -211,14 +213,20 @@ export const MAX_AUDIO_FILE_BYTES = 25 * 1024 * 1024; // 25 MB (OpenAI transcrip
 
 // --- Admin ------------------------------------------------------------
 
-export const trialConfigSchema = z.object({
-  trialDays: z.number().int().min(1, "Must be at least 1 day.").max(90, "Must be 90 days or fewer."),
+/** The two admin-editable, DB-backed plans (`development` stays code-defined — see lib/entitlements/plans.ts). */
+export const adminEditablePlanIdSchema = z.enum(["starter", "pro"]);
+
+export const planConfigUpdateSchema = z.object({
+  planId: adminEditablePlanIdSchema,
+  displayName: z.string().trim().min(1, "Display name is required.").max(60, "Display name is too long."),
   maxProjects: z.number().int().min(1).max(10_000),
   aiActionsLimit: z.number().int().min(1).max(1_000_000),
   transcriptionMinutesLimit: z.number().min(0).max(1_000_000),
   apiCostBudgetUsd: z.number().positive("Must be a positive amount.").max(100_000).nullable(),
+  monthlyPricePln: z.number().min(0, "Must be zero or a positive amount.").max(100_000),
 });
 
+/** Admin's manual plan override — the only place `development` is an assignable value; see components/admin/set-plan-control.tsx. */
 export const setUserPlanSchema = z.object({
-  planId: z.enum(["trial", "development"]),
+  planId: z.enum(["starter", "pro", "development"]),
 });

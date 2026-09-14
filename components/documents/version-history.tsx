@@ -34,7 +34,7 @@ export function VersionHistory({
   return (
     <section className="flex flex-col gap-3">
       <h2 className="flex items-center gap-2 text-lg font-semibold tracking-tight">
-        <History className="size-4" />
+        <History className="size-4 text-slate-500" />
         Version History
       </h2>
 

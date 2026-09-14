@@ -190,7 +190,7 @@ export function RecordNoteDialog({ projectId }: { projectId: string }) {
             className={`flex size-28 items-center justify-center rounded-full transition-colors ${
               state === "recording"
                 ? "bg-destructive/10 text-destructive"
-                : "bg-muted text-muted-foreground"
+                : "bg-violet-50 text-violet-500"
             }`}
           >
             <Mic className={`size-10 ${state === "recording" ? "animate-pulse" : ""}`} />
