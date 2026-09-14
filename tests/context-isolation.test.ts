@@ -25,6 +25,7 @@ beforeEach(() => {
     {
       id: PROJECT_A,
       user_id: FAKE_USER_ID,
+      owner_id: FAKE_USER_ID,
       name: "Project A",
       description: "Project A description",
       created_at: "2026-01-01T00:00:00Z",
@@ -33,6 +34,7 @@ beforeEach(() => {
     {
       id: PROJECT_B,
       user_id: FAKE_USER_ID,
+      owner_id: FAKE_USER_ID,
       name: "Project B",
       description: "Project B description",
       created_at: "2026-01-01T00:00:00Z",

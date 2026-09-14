@@ -3,15 +3,16 @@ import { getSupabaseServerClient } from "@/lib/db/client";
 import { requireUser } from "@/lib/supabase/auth";
 import type { Document, DocumentType, DocumentVersion, DocumentVersionSource } from "@/types";
 
+/** Access is Project-membership-based (RLS: `can_access_project`), not `documents.user_id` — that column is creator attribution only now. Never filter these queries by `.eq("user_id", ...)`; that would hide a collaborator's Documents from everyone else with real access to the Project. */
+
 export async function listDocumentsForProject(projectId: string): Promise<Document[]> {
   const supabase = await getSupabaseServerClient();
-  const user = await requireUser();
+  await requireUser();
 
   const { data, error } = await supabase
     .from("documents")
     .select("*")
     .eq("project_id", projectId)
-    .eq("user_id", user.id)
     .order("updated_at", { ascending: false });
 
   if (error) throw error;
@@ -20,13 +21,12 @@ export async function listDocumentsForProject(projectId: string): Promise<Docume
 
 export async function getDocument(documentId: string): Promise<Document | null> {
   const supabase = await getSupabaseServerClient();
-  const user = await requireUser();
+  await requireUser();
 
   const { data, error } = await supabase
     .from("documents")
     .select("*")
     .eq("id", documentId)
-    .eq("user_id", user.id)
     .maybeSingle();
 
   if (error) throw error;
@@ -80,7 +80,7 @@ export async function updateDocumentContent(
   }
 ): Promise<Document> {
   const supabase = await getSupabaseServerClient();
-  const user = await requireUser();
+  await requireUser();
 
   const { title, content, seoSettings } = input;
   const update: Record<string, unknown> = {};
@@ -92,7 +92,6 @@ export async function updateDocumentContent(
     .from("documents")
     .update(update)
     .eq("id", documentId)
-    .eq("user_id", user.id)
     .select("*")
     .single();
 
@@ -102,26 +101,24 @@ export async function updateDocumentContent(
 
 export async function deleteDocument(documentId: string): Promise<void> {
   const supabase = await getSupabaseServerClient();
-  const user = await requireUser();
+  await requireUser();
 
   const { error } = await supabase
     .from("documents")
     .delete()
-    .eq("id", documentId)
-    .eq("user_id", user.id);
+    .eq("id", documentId);
 
   if (error) throw error;
 }
 
 export async function listDocumentVersions(documentId: string): Promise<DocumentVersion[]> {
   const supabase = await getSupabaseServerClient();
-  const user = await requireUser();
+  await requireUser();
 
   const { data, error } = await supabase
     .from("document_versions")
     .select("*")
     .eq("document_id", documentId)
-    .eq("user_id", user.id)
     .order("version_number", { ascending: false });
 
   if (error) throw error;
@@ -133,14 +130,13 @@ export async function getDocumentVersion(
   versionNumber: number
 ): Promise<DocumentVersion | null> {
   const supabase = await getSupabaseServerClient();
-  const user = await requireUser();
+  await requireUser();
 
   const { data, error } = await supabase
     .from("document_versions")
     .select("*")
     .eq("document_id", documentId)
     .eq("version_number", versionNumber)
-    .eq("user_id", user.id)
     .maybeSingle();
 
   if (error) throw error;
@@ -153,11 +149,12 @@ export async function getDocumentVersion(
  * the only supported way to write a version — it guarantees linear,
  * gap-free version numbering even under concurrent requests.
  *
- * Ownership is enforced twice: callers must already have loaded the parent
- * Document through getDocument()/getProject() (both scoped to the caller)
- * before reaching here, and the Postgres function itself re-checks
- * ownership under RLS and stamps user_id server-side — so this can never be
- * used to attach a version to another user's Document, even by mistake.
+ * Access is enforced by the function itself, which re-reads the parent
+ * Document under `documents_select_own`'s (now Project-membership-based)
+ * RLS — so this can only ever be called against a Document the caller can
+ * actually access, owner or Member alike. The version's `created_by` is
+ * stamped as the real acting user (`auth.uid()` inside the function), which
+ * may differ from the Document's own `user_id` (its original creator).
  */
 export async function createDocumentVersion(input: {
   documentId: string;

@@ -40,9 +40,11 @@ import type { Document, DocumentVersion } from "@/types";
 export function DocumentWorkspace({
   document: initialDocument,
   initialVersions,
+  isProjectOwner = true,
 }: {
   document: Document;
   initialVersions: DocumentVersion[];
+  isProjectOwner?: boolean;
 }) {
   const presetSnapshot = resolveDocumentPresetSnapshot(initialDocument);
   const [seoKeywords, setSeoKeywords] = useState(resolveDocumentSeoConfig(initialDocument));
@@ -107,7 +109,7 @@ export function DocumentWorkspace({
     });
     if (!res.ok) {
       const data = await res.json().catch(() => ({}));
-      throw new Error(resolveApiErrorMessage(data, "Failed to apply the AI edit."));
+      throw new Error(resolveApiErrorMessage(data, "Failed to apply the AI edit.", isProjectOwner));
     }
     const { version } = await res.json();
     setContent(version.content);
@@ -226,6 +228,7 @@ export function DocumentWorkspace({
                   documentTitle={title}
                   seoKeywords={seoKeywords}
                   onSeoKeywordsChange={setSeoKeywords}
+                  isProjectOwner={isProjectOwner}
                 />
               ) : null}
             </div>

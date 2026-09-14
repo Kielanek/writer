@@ -38,7 +38,13 @@ function formatElapsed(seconds: number): string {
   return `${mins}:${secs.toString().padStart(2, "0")}`;
 }
 
-export function RecordNoteDialog({ projectId }: { projectId: string }) {
+export function RecordNoteDialog({
+  projectId,
+  isProjectOwner = true,
+}: {
+  projectId: string;
+  isProjectOwner?: boolean;
+}) {
   const router = useRouter();
   const [open, setOpen] = useState(false);
   const [state, setState] = useState<RecordingState>("idle");
@@ -158,7 +164,7 @@ export function RecordNoteDialog({ projectId }: { projectId: string }) {
 
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
-        throw new Error(resolveApiErrorMessage(data, "Failed to save the recording."));
+        throw new Error(resolveApiErrorMessage(data, "Failed to save the recording.", isProjectOwner));
       }
 
       toast.success("Note created");

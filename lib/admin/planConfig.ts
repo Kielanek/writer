@@ -9,6 +9,8 @@ export interface PlanConfig {
   transcriptionMinutesLimit: number;
   apiCostBudgetUsd: number | null;
   monthlyPricePln: number;
+  /** Total seats (owner + unique collaborators) across every Project accounts on this plan own — see lib/db/collaboration.ts. */
+  seatLimit: number;
 }
 
 function toPlanConfig(row: {
@@ -19,6 +21,7 @@ function toPlanConfig(row: {
   transcription_minutes_limit: number;
   api_cost_budget_usd: number | null;
   monthly_price_pln: number | null;
+  seat_limit: number | null;
 }): PlanConfig {
   return {
     planId: row.plan_id as "starter" | "pro",
@@ -28,6 +31,7 @@ function toPlanConfig(row: {
     transcriptionMinutesLimit: Number(row.transcription_minutes_limit),
     apiCostBudgetUsd: row.api_cost_budget_usd === null ? null : Number(row.api_cost_budget_usd),
     monthlyPricePln: Number(row.monthly_price_pln ?? 0),
+    seatLimit: row.seat_limit ?? (row.plan_id === "starter" ? 1 : 3),
   };
 }
 
@@ -43,7 +47,9 @@ export async function getAllPlanConfigs(): Promise<{ starter: PlanConfig; pro: P
   const admin = createAdminClient();
   const { data, error } = await admin
     .from("plan_configs")
-    .select("plan_id, display_name, max_projects, ai_actions_limit, transcription_minutes_limit, api_cost_budget_usd, monthly_price_pln")
+    .select(
+      "plan_id, display_name, max_projects, ai_actions_limit, transcription_minutes_limit, api_cost_budget_usd, monthly_price_pln, seat_limit"
+    )
     .in("plan_id", ["starter", "pro"]);
 
   if (error) throw error;
@@ -83,6 +89,7 @@ export async function updatePlanConfig(config: PlanConfig): Promise<void> {
       transcription_minutes_limit: config.transcriptionMinutesLimit,
       api_cost_budget_usd: config.apiCostBudgetUsd,
       monthly_price_pln: config.monthlyPricePln,
+      seat_limit: config.seatLimit,
     })
     .eq("plan_id", config.planId);
 

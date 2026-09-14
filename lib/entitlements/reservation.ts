@@ -1,8 +1,8 @@
 import "server-only";
-import { getSupabaseServerClient } from "@/lib/db/client";
+import { createAdminClient } from "@/lib/supabase/admin";
 import { getEntitlementPeriod } from "@/lib/entitlements/period";
 import { getPlanLimits } from "@/lib/entitlements/plans";
-import { getUserProfile } from "@/lib/entitlements/profile";
+import { getProfileForUser } from "@/lib/entitlements/profile";
 import { UnknownModelPricingError } from "@/lib/entitlements/cost";
 
 /**
@@ -23,21 +23,27 @@ export interface ProviderReservation {
 }
 
 /**
- * Real provider cost, in USD, for the caller's current entitlement period —
- * the epoch (i.e. all-time) for Starter's lifetime cap, or the current Pro
- * period for a Pro account with a cap (see
+ * Real provider cost, in USD, for `billingUserId`'s current entitlement
+ * period — the epoch (i.e. all-time) for Starter's lifetime cap, or the
+ * current Pro period for a Pro account with a cap (see
  * lib/entitlements/period.ts's getEntitlementPeriod()). Internal only —
  * never wired into a route response; see getUserEntitlements()'s
  * `providerCost` field, which is deliberately stripped before GET /api/usage
  * returns it (the Admin Panel is the one place it IS exposed, to an
  * already-verified admin only).
+ *
+ * Uses the admin/secret client and an explicit `p_user_id` — see this
+ * module's other functions for why (billing a Project Owner from a
+ * Member's session requires reading/writing data that isn't the caller's
+ * own).
  */
-export async function getProviderCostTotal(): Promise<number> {
-  const profile = await getUserProfile();
+export async function getProviderCostTotal(billingUserId: string): Promise<number> {
+  const profile = await getProfileForUser(billingUserId);
   const period = getEntitlementPeriod(profile);
 
-  const supabase = await getSupabaseServerClient();
-  const { data, error } = await supabase.rpc("get_provider_cost_total", {
+  const admin = createAdminClient();
+  const { data, error } = await admin.rpc("get_provider_cost_total", {
+    p_user_id: billingUserId,
     p_period_start: period.start.toISOString(),
   });
   if (error) throw error;
@@ -45,30 +51,43 @@ export async function getProviderCostTotal(): Promise<number> {
 }
 
 /**
- * Atomically reserves `estimatedCostUsd` against the current plan's
+ * Atomically reserves `estimatedCostUsd` against `billingUserId`'s plan
  * apiCostBudgetUsd, BEFORE the caller makes the actual OpenAI request.
  * Returns null when the plan has no cost cap (development/pro today) —
  * there's nothing to reserve against, so this is a deliberate no-op rather
  * than reserving an amount no one will ever check.
  *
  * Throws ProviderBudgetExhaustedError if the reservation would exceed
- * budget. See supabase/migrations/0014_starter_pro_plans.sql's
+ * budget. See supabase/migrations/0017_project_collaboration.sql's
  * reserve_provider_budget() for the atomic (advisory-lock-serialized)
  * database side of this check — the real security boundary; this function
  * is just its thin, typed wrapper.
+ *
+ * Called via the admin/secret client with an explicit `p_user_id` —
+ * `provider_cost_reservations` has zero grant to `authenticated` at all
+ * (real provider economics must never be client-readable/writable even
+ * with a valid session), and now that a Member can spend against an
+ * Owner's budget, deriving the billing identity from `auth.uid()` inside
+ * the RPC would be wrong anyway. The caller (lib/ai/guarded.ts) is
+ * responsible for having already verified the actor may act on
+ * `billingUserId`'s behalf (via a Project access check) before reaching
+ * here — this function trusts that verification, the same trust model
+ * recordUsageEvent()/applyPlanChange() already use.
  */
 export async function checkAndReserveProviderBudget(input: {
   feature: string;
   estimatedCostUsd: number;
+  billingUserId: string;
 }): Promise<ProviderReservation | null> {
-  const profile = await getUserProfile();
+  const profile = await getProfileForUser(input.billingUserId);
   const budget = (await getPlanLimits(profile.planId)).apiCostBudgetUsd;
   if (budget === null) return null;
 
   const period = getEntitlementPeriod(profile);
-  const supabase = await getSupabaseServerClient();
-  const { data, error } = await supabase
+  const admin = createAdminClient();
+  const { data, error } = await admin
     .rpc("reserve_provider_budget", {
+      p_user_id: input.billingUserId,
       p_feature: input.feature,
       p_reserved_cost_usd: input.estimatedCostUsd,
       p_budget_limit_usd: budget,
@@ -91,12 +110,18 @@ export async function checkAndReserveProviderBudget(input: {
 export async function reconcileProviderReservation(
   reservationId: string,
   actualCostUsd: number,
+  billingUserId: string,
+  actorUserId: string,
+  projectId: string | undefined,
   metadata: Record<string, unknown> = {}
 ): Promise<void> {
-  const supabase = await getSupabaseServerClient();
-  const { error } = await supabase.rpc("reconcile_provider_reservation", {
+  const admin = createAdminClient();
+  const { error } = await admin.rpc("reconcile_provider_reservation", {
+    p_user_id: billingUserId,
     p_reservation_id: reservationId,
     p_actual_cost_usd: actualCostUsd,
+    p_actor_user_id: actorUserId,
+    p_project_id: projectId ?? null,
     p_metadata: metadata,
   });
   if (error) throw error;
@@ -107,10 +132,11 @@ export async function reconcileProviderReservation(
  * provider cost. Best-effort: logs rather than throws, so a release failure
  * never masks the original error that triggered the release.
  */
-export async function releaseProviderReservation(reservationId: string): Promise<void> {
+export async function releaseProviderReservation(reservationId: string, billingUserId: string): Promise<void> {
   try {
-    const supabase = await getSupabaseServerClient();
-    const { error } = await supabase.rpc("release_provider_reservation", {
+    const admin = createAdminClient();
+    const { error } = await admin.rpc("release_provider_reservation", {
+      p_user_id: billingUserId,
       p_reservation_id: reservationId,
     });
     if (error) throw error;
@@ -147,6 +173,9 @@ export function resolveEstimateOrFailClosed(compute: () => number, hasBudgetCap:
 export async function withProviderCostGuard<T>(params: {
   feature: string;
   estimatedCostUsd: number;
+  billingUserId: string;
+  actorUserId: string;
+  projectId?: string;
   run: () => Promise<{ result: T; actualCostUsd: number; metadata?: Record<string, unknown> }>;
   /** Fallback recorder used when the plan has no cost cap (so no reservation exists to reconcile) — see lib/entitlements/usage.ts's recordUsageEvent. */
   recordUncapped: (actualCostUsd: number, metadata: Record<string, unknown>) => Promise<void>;
@@ -154,20 +183,28 @@ export async function withProviderCostGuard<T>(params: {
   const reservation = await checkAndReserveProviderBudget({
     feature: params.feature,
     estimatedCostUsd: params.estimatedCostUsd,
+    billingUserId: params.billingUserId,
   });
 
   try {
     const { result, actualCostUsd, metadata } = await params.run();
 
     if (reservation) {
-      await reconcileProviderReservation(reservation.id, actualCostUsd, metadata ?? {});
+      await reconcileProviderReservation(
+        reservation.id,
+        actualCostUsd,
+        params.billingUserId,
+        params.actorUserId,
+        params.projectId,
+        metadata ?? {}
+      );
     } else {
       await params.recordUncapped(actualCostUsd, { feature: params.feature, ...metadata });
     }
 
     return result;
   } catch (err) {
-    if (reservation) await releaseProviderReservation(reservation.id);
+    if (reservation) await releaseProviderReservation(reservation.id, params.billingUserId);
     throw err;
   }
 }

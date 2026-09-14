@@ -45,11 +45,13 @@ export function SeoMetadataEditor({
   documentTitle,
   seoKeywords,
   onSeoKeywordsChange,
+  isProjectOwner = true,
 }: {
   documentId: string;
   documentTitle: string;
   seoKeywords: SeoKeywordConfig;
   onSeoKeywordsChange: (next: SeoKeywordConfig) => void;
+  isProjectOwner?: boolean;
 }) {
   const [generating, setGenerating] = useState(false);
   const [confirmRegenerateOpen, setConfirmRegenerateOpen] = useState(false);
@@ -84,7 +86,7 @@ export function SeoMetadataEditor({
       const res = await fetch(`/api/documents/${documentId}/generate-meta`, { method: "POST" });
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
-        throw new Error(resolveApiErrorMessage(data, "Failed to generate SEO meta tags."));
+        throw new Error(resolveApiErrorMessage(data, "Failed to generate SEO meta tags.", isProjectOwner));
       }
       const { document } = await res.json();
       onSeoKeywordsChange(document.seo_settings as SeoKeywordConfig);

@@ -2,6 +2,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { ArrowLeft } from "lucide-react";
 import { getProject } from "@/lib/db/projects";
+import { getAuthedUser } from "@/lib/supabase/auth";
 import { CreateDocumentForm } from "@/components/documents/create-document-form";
 
 export const dynamic = "force-dynamic";
@@ -12,8 +13,9 @@ export default async function NewDocumentPage({
   params: Promise<{ projectId: string }>;
 }) {
   const { projectId } = await params;
-  const project = await getProject(projectId);
+  const [project, user] = await Promise.all([getProject(projectId), getAuthedUser()]);
   if (!project) notFound();
+  const isProjectOwner = project.owner_id === user?.id;
 
   return (
     <main className="mx-auto flex w-full max-w-2xl flex-1 flex-col gap-6 px-4 py-6 sm:px-6">
@@ -33,7 +35,7 @@ export default async function NewDocumentPage({
         </p>
       </div>
 
-      <CreateDocumentForm projectId={projectId} />
+      <CreateDocumentForm projectId={projectId} isProjectOwner={isProjectOwner} />
     </main>
   );
 }

@@ -1,6 +1,6 @@
 import "server-only";
 import { AiGenerationError } from "@/lib/ai/generateText";
-import { guardedGenerateText } from "@/lib/ai/guarded";
+import { guardedGenerateText, type BillingContext } from "@/lib/ai/guarded";
 import {
   composeDocumentEditPrompt,
   composeDocumentGenerationPrompt,
@@ -38,6 +38,7 @@ async function ensureKeywordCoverage(params: {
   context: ProjectContext;
   seoKeywords: SeoKeywordConfig;
   repairFeature: "document_generation_repair" | "document_edit_repair";
+  billing: BillingContext;
 }): Promise<string> {
   const missingKeywords = getMissingKeywords(params.content, params.seoKeywords);
   if (missingKeywords.length === 0) return params.content;
@@ -52,7 +53,7 @@ async function ensureKeywordCoverage(params: {
       seoKeywords: params.seoKeywords,
       missingKeywords,
     });
-    const result = await guardedGenerateText(params.repairFeature, { system, prompt, temperature: 0.4 });
+    const result = await guardedGenerateText(params.repairFeature, { system, prompt, temperature: 0.4 }, params.billing);
     repaired = result.text;
   } catch (err) {
     console.error("Keyword repair pass failed; keeping the original content.", err);
@@ -75,7 +76,9 @@ async function ensureKeywordCoverage(params: {
  * limits are action-counted, not token-counted (see
  * lib/entitlements/usage.ts). Each call still records its own real
  * provider cost independently via lib/ai/guarded.ts — see
- * ensureKeywordCoverage's doc comment.
+ * ensureKeywordCoverage's doc comment. `billing` identifies whose plan pays
+ * (the Project Owner) and who actually triggered it (the real actor,
+ * Owner or Member) — see lib/ai/guarded.ts's BillingContext doc comment.
  */
 export async function generateDocumentContent(input: {
   context: ProjectContext;
@@ -83,9 +86,14 @@ export async function generateDocumentContent(input: {
   instructions: string;
   presetSnapshot: PresetSnapshot;
   seoKeywords: SeoKeywordConfig | null;
+  billing: BillingContext;
 }): Promise<string> {
   const { system, prompt } = composeDocumentGenerationPrompt(input);
-  const { text: content } = await guardedGenerateText("document_generation", { system, prompt, temperature: 0.7 });
+  const { text: content } = await guardedGenerateText(
+    "document_generation",
+    { system, prompt, temperature: 0.7 },
+    input.billing
+  );
 
   if (!input.seoKeywords) return content;
 
@@ -96,6 +104,7 @@ export async function generateDocumentContent(input: {
     context: input.context,
     seoKeywords: input.seoKeywords,
     repairFeature: "document_generation_repair",
+    billing: input.billing,
   });
 }
 
@@ -107,9 +116,10 @@ export async function generateDocumentEdit(input: {
   editInstruction: string;
   presetSnapshot: PresetSnapshot;
   seoKeywords: SeoKeywordConfig | null;
+  billing: BillingContext;
 }): Promise<string> {
   const { system, prompt } = composeDocumentEditPrompt(input);
-  const { text: content } = await guardedGenerateText("document_edit", { system, prompt, temperature: 0.6 });
+  const { text: content } = await guardedGenerateText("document_edit", { system, prompt, temperature: 0.6 }, input.billing);
 
   if (!input.seoKeywords) return content;
 
@@ -120,6 +130,7 @@ export async function generateDocumentEdit(input: {
     context: input.context,
     seoKeywords: input.seoKeywords,
     repairFeature: "document_edit_repair",
+    billing: input.billing,
   });
 }
 
@@ -133,8 +144,9 @@ export async function generateDocumentMeta(input: {
   title: string;
   content: string;
   primaryKeyword?: string;
+  billing: BillingContext;
 }): Promise<ParsedDocumentMeta> {
   const { system, prompt } = buildDocumentMetaPrompt(input);
-  const { text } = await guardedGenerateText("document_meta", { system, prompt, temperature: 0.5 });
+  const { text } = await guardedGenerateText("document_meta", { system, prompt, temperature: 0.5 }, input.billing);
   return parseDocumentMetaResponse(text);
 }

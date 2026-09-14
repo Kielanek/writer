@@ -3,7 +3,7 @@
 import { useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { Folder, MoreVertical, Pencil, Trash2 } from "lucide-react";
+import { Folder, MoreVertical, Pencil, Trash2, Users } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "cn";
 import {
@@ -12,6 +12,7 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { ConfirmDialog } from "@/components/confirm-dialog";
 import { EditProjectDialog } from "@/components/projects/edit-project-dialog";
@@ -19,7 +20,17 @@ import { formatRelativeTime } from "@/lib/utils/format";
 import { pickPastelTag } from "@/lib/utils/colorTag";
 import type { ProjectWithCounts } from "@/types";
 
-export function ProjectCard({ project: initialProject }: { project: ProjectWithCounts }) {
+export function ProjectCard({
+  project: initialProject,
+  isOwner,
+  ownerEmail,
+}: {
+  project: ProjectWithCounts;
+  /** Whether the CURRENT viewer owns this Project — controls whether Rename/Delete are offered here at all (the real boundary is server-side RLS; this only avoids showing a Member a menu item that would just 403). */
+  isOwner: boolean;
+  /** Shown only on a shared-with-me card ("Shared by john@example.com"). Omit for owned Projects. */
+  ownerEmail?: string | null;
+}) {
   const router = useRouter();
   const [project, setProject] = useState(initialProject);
   const [editOpen, setEditOpen] = useState(false);
@@ -53,7 +64,15 @@ export function ProjectCard({ project: initialProject }: { project: ProjectWithC
             <Folder className="size-4" strokeWidth={2} />
           </div>
           <div className="min-w-0 flex-1">
-            <h2 className="truncate font-semibold leading-snug">{project.name}</h2>
+            <div className="flex items-center gap-2">
+              <h2 className="truncate font-semibold leading-snug">{project.name}</h2>
+              {!isOwner && (
+                <Badge variant="secondary" className="shrink-0 gap-1">
+                  <Users className="size-3" />
+                  Shared
+                </Badge>
+              )}
+            </div>
             {project.description ? (
               <p className="mt-1 line-clamp-2 text-sm text-muted-foreground">
                 {project.description}
@@ -65,33 +84,41 @@ export function ProjectCard({ project: initialProject }: { project: ProjectWithC
               <span>{project.document_count} {project.document_count === 1 ? "document" : "documents"}</span>
               <span aria-hidden>·</span>
               <span>Updated {formatRelativeTime(project.updated_at)}</span>
+              {!isOwner && ownerEmail ? (
+                <>
+                  <span aria-hidden>·</span>
+                  <span className="truncate">Owner: {ownerEmail}</span>
+                </>
+              ) : null}
             </div>
           </div>
         </div>
       </Link>
 
-      <DropdownMenu>
-        <DropdownMenuTrigger asChild>
-          <Button
-            variant="ghost"
-            size="icon"
-            className="absolute right-2 top-2 size-8 text-muted-foreground"
-            aria-label="Project actions"
-          >
-            <MoreVertical className="size-4" />
-          </Button>
-        </DropdownMenuTrigger>
-        <DropdownMenuContent align="end">
-          <DropdownMenuItem onSelect={() => setEditOpen(true)}>
-            <Pencil className="size-4" />
-            Rename / Edit
-          </DropdownMenuItem>
-          <DropdownMenuItem variant="destructive" onSelect={() => setDeleteOpen(true)}>
-            <Trash2 className="size-4" />
-            Delete
-          </DropdownMenuItem>
-        </DropdownMenuContent>
-      </DropdownMenu>
+      {isOwner && (
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button
+              variant="ghost"
+              size="icon"
+              className="absolute right-2 top-2 size-8 text-muted-foreground"
+              aria-label="Project actions"
+            >
+              <MoreVertical className="size-4" />
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end">
+            <DropdownMenuItem onSelect={() => setEditOpen(true)}>
+              <Pencil className="size-4" />
+              Rename / Edit
+            </DropdownMenuItem>
+            <DropdownMenuItem variant="destructive" onSelect={() => setDeleteOpen(true)}>
+              <Trash2 className="size-4" />
+              Delete
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
+      )}
 
       <EditProjectDialog
         project={project}

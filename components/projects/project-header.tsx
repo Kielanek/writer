@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { Clock, FileText, MoreVertical, Notebook, Pencil, Trash2 } from "lucide-react";
+import { Clock, FileText, LogOut, MoreVertical, Notebook, Pencil, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import {
   DropdownMenu,
@@ -10,9 +10,11 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { ConfirmDialog } from "@/components/confirm-dialog";
 import { EditProjectDialog } from "@/components/projects/edit-project-dialog";
+import { ShareProjectDialog } from "@/components/projects/share-project-dialog";
 import { formatRelativeTime } from "@/lib/utils/format";
 import type { Project } from "@/types";
 
@@ -20,15 +22,18 @@ export function ProjectHeader({
   project: initialProject,
   noteCount,
   documentCount,
+  isOwner,
 }: {
   project: Project;
   noteCount: number;
   documentCount: number;
+  isOwner: boolean;
 }) {
   const router = useRouter();
   const [project, setProject] = useState(initialProject);
   const [editOpen, setEditOpen] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
+  const [leaveOpen, setLeaveOpen] = useState(false);
 
   async function handleDelete() {
     try {
@@ -45,35 +50,70 @@ export function ProjectHeader({
     }
   }
 
+  async function handleLeave() {
+    try {
+      const res = await fetch(`/api/projects/${project.id}/leave`, { method: "POST" });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data.error || "Failed to leave the project.");
+      }
+      toast.success("You left the project");
+      router.push("/");
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Failed to leave the project.");
+      throw err;
+    }
+  }
+
   return (
     <div className="rounded-xl border bg-card p-4 sm:p-5">
       <div className="flex items-start justify-between gap-3">
-        <h1 className="min-w-0 text-xl font-bold leading-snug tracking-tight text-balance sm:text-2xl">
-          {project.name}
-        </h1>
+        <div className="flex min-w-0 items-center gap-2">
+          <h1 className="min-w-0 text-xl font-bold leading-snug tracking-tight text-balance sm:text-2xl">
+            {project.name}
+          </h1>
+          {!isOwner && (
+            <Badge variant="secondary" className="shrink-0">
+              Shared Project
+            </Badge>
+          )}
+        </div>
 
-        <DropdownMenu>
-          <DropdownMenuTrigger asChild>
-            <Button
-              variant="ghost"
-              size="icon"
-              className="-mr-1.5 -mt-1 shrink-0 text-muted-foreground"
-              aria-label="Project actions"
-            >
-              <MoreVertical className="size-4" />
+        <div className="flex shrink-0 items-center gap-1.5">
+          {isOwner ? (
+            <ShareProjectDialog projectId={project.id} />
+          ) : (
+            <Button variant="outline" size="sm" onClick={() => setLeaveOpen(true)}>
+              <LogOut className="size-4" />
+              Leave
             </Button>
-          </DropdownMenuTrigger>
-          <DropdownMenuContent align="end">
-            <DropdownMenuItem onSelect={() => setEditOpen(true)}>
-              <Pencil className="size-4" />
-              Rename / Edit
-            </DropdownMenuItem>
-            <DropdownMenuItem variant="destructive" onSelect={() => setDeleteOpen(true)}>
-              <Trash2 className="size-4" />
-              Delete
-            </DropdownMenuItem>
-          </DropdownMenuContent>
-        </DropdownMenu>
+          )}
+
+          {isOwner && (
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="text-muted-foreground"
+                  aria-label="Project actions"
+                >
+                  <MoreVertical className="size-4" />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end">
+                <DropdownMenuItem onSelect={() => setEditOpen(true)}>
+                  <Pencil className="size-4" />
+                  Rename / Edit
+                </DropdownMenuItem>
+                <DropdownMenuItem variant="destructive" onSelect={() => setDeleteOpen(true)}>
+                  <Trash2 className="size-4" />
+                  Delete
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
+          )}
+        </div>
       </div>
 
       {project.description ? (
@@ -97,21 +137,36 @@ export function ProjectHeader({
         </span>
       </div>
 
-      <EditProjectDialog
-        project={project}
-        open={editOpen}
-        onOpenChange={setEditOpen}
-        onSaved={(updated) => setProject((p) => ({ ...p, ...updated }))}
-      />
+      {isOwner && (
+        <EditProjectDialog
+          project={project}
+          open={editOpen}
+          onOpenChange={setEditOpen}
+          onSaved={(updated) => setProject((p) => ({ ...p, ...updated }))}
+        />
+      )}
 
-      <ConfirmDialog
-        open={deleteOpen}
-        onOpenChange={setDeleteOpen}
-        title="Delete this project?"
-        description={`This will permanently delete "${project.name}" along with all of its notes, documents, and chat history. This cannot be undone.`}
-        confirmLabel="Delete Project"
-        onConfirm={handleDelete}
-      />
+      {isOwner && (
+        <ConfirmDialog
+          open={deleteOpen}
+          onOpenChange={setDeleteOpen}
+          title="Delete this project?"
+          description={`This will permanently delete "${project.name}" along with all of its notes, documents, and chat history. This cannot be undone.`}
+          confirmLabel="Delete Project"
+          onConfirm={handleDelete}
+        />
+      )}
+
+      {!isOwner && (
+        <ConfirmDialog
+          open={leaveOpen}
+          onOpenChange={setLeaveOpen}
+          title="Leave this project?"
+          description="You will immediately lose access to this Project's notes and documents. The owner can invite you back later."
+          confirmLabel="Leave Project"
+          onConfirm={handleLeave}
+        />
+      )}
     </div>
   );
 }

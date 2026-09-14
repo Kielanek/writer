@@ -2,8 +2,9 @@ import Link from "next/link";
 import { ArrowLeft } from "lucide-react";
 import { notFound } from "next/navigation";
 import { isAdmin } from "@/lib/admin/auth";
-import { getAdminUserDetail, getAdminUserContentCounts } from "@/lib/admin/users";
+import { getAdminUserDetail, getAdminUserContentCounts, getAdminUserSeatUsage } from "@/lib/admin/users";
 import { getEntitlementsForUser } from "@/lib/admin/entitlements";
+import { getPlanLimits } from "@/lib/entitlements/plans";
 import { PlanStatusBadge } from "@/components/admin/plan-status-badge";
 import { SetPlanControl } from "@/components/admin/set-plan-control";
 import { formatDateTime, formatShortDate } from "@/lib/utils/format";
@@ -21,9 +22,11 @@ export default async function AdminUserDetailPage({
   const user = await getAdminUserDetail(userId);
   if (!user) notFound();
 
-  const [entitlements, counts] = await Promise.all([
+  const [entitlements, counts, seatUsage, planLimits] = await Promise.all([
     getEntitlementsForUser(user),
     getAdminUserContentCounts(userId),
+    getAdminUserSeatUsage(userId),
+    getPlanLimits(user.planId),
   ]);
 
   return (
@@ -87,6 +90,12 @@ export default async function AdminUserDetailPage({
               {entitlements.providerCost
                 ? `$${entitlements.providerCost.usedUsd.toFixed(4)} / $${entitlements.providerCost.limitUsd.toFixed(2)}`
                 : "—"}
+            </dd>
+          </div>
+          <div>
+            <dt className="text-xs text-muted-foreground">Seats</dt>
+            <dd className="tabular-nums">
+              {seatUsage} / {planLimits.seatLimit}
             </dd>
           </div>
         </dl>

@@ -4,6 +4,7 @@ import { ArrowLeft } from "lucide-react";
 import { getProject } from "@/lib/db/projects";
 import { listNotesForProject } from "@/lib/db/notes";
 import { listDocumentsForProject } from "@/lib/db/documents";
+import { getAuthedUser } from "@/lib/supabase/auth";
 import { ProjectHeader } from "@/components/projects/project-header";
 import { ProjectActionGroups } from "@/components/projects/project-action-groups";
 import { NotesSection } from "@/components/notes/notes-section";
@@ -21,10 +22,13 @@ export default async function ProjectPage({
 
   if (!project) notFound();
 
-  const [notes, documents] = await Promise.all([
+  const [notes, documents, user] = await Promise.all([
     listNotesForProject(projectId),
     listDocumentsForProject(projectId),
+    getAuthedUser(),
   ]);
+
+  const isOwner = project.owner_id === user?.id;
 
   return (
     <main className="mx-auto flex w-full max-w-3xl flex-1 flex-col gap-6 bg-neutral-50/60 px-4 py-5 sm:px-6 sm:py-6">
@@ -36,9 +40,9 @@ export default async function ProjectPage({
         Projects
       </Link>
 
-      <ProjectHeader project={project} noteCount={notes.length} documentCount={documents.length} />
+      <ProjectHeader project={project} noteCount={notes.length} documentCount={documents.length} isOwner={isOwner} />
 
-      <ProjectActionGroups projectId={projectId} />
+      <ProjectActionGroups projectId={projectId} isProjectOwner={isOwner} />
 
       <NotesSection notes={notes} />
 

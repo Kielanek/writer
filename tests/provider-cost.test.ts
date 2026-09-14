@@ -102,9 +102,14 @@ describe("calculateTranscriptionCostUsd (gpt-transcribe)", () => {
 describe("provider_cost usage_events store sub-cent precision", () => {
   it("6) a fractional-cent cost round-trips exactly through recordUsageEvent + getProviderCostTotal", async () => {
     const tinyCost = 0.0034;
-    await recordUsageEvent({ eventType: "provider_cost", quantity: tinyCost, metadata: { feature: "test" } });
+    await recordUsageEvent({
+      eventType: "provider_cost",
+      quantity: tinyCost,
+      metadata: { feature: "test" },
+      billingUserId: FAKE_USER_ID,
+    });
 
-    const total = await getProviderCostTotal();
+    const total = await getProviderCostTotal(FAKE_USER_ID);
     expect(total).toBeCloseTo(tinyCost, 10);
     expect(total).not.toBe(0);
   });
@@ -129,7 +134,11 @@ describe("Unknown model pricing", () => {
 describe("Plan cost-cap behavior", () => {
   it("8) development plan has no provider-cost cap", async () => {
     // no profiles row seeded => getUserPlan() falls back to development
-    const reservation = await checkAndReserveProviderBudget({ feature: "test", estimatedCostUsd: 1000 });
+    const reservation = await checkAndReserveProviderBudget({
+      feature: "test",
+      estimatedCostUsd: 1000,
+      billingUserId: FAKE_USER_ID,
+    });
     expect(reservation).toBeNull(); // no cap => nothing to reserve, never blocks
   });
 
@@ -148,28 +157,34 @@ describe("Starter budget reservation", () => {
   });
 
   it("10) below budget: reservation succeeds", async () => {
-    const reservation = await checkAndReserveProviderBudget({ feature: "test", estimatedCostUsd: 0.1 });
+    const reservation = await checkAndReserveProviderBudget({
+      feature: "test",
+      estimatedCostUsd: 0.1,
+      billingUserId: FAKE_USER_ID,
+    });
     expect(reservation).not.toBeNull();
     expect(reservation!.reservedCostUsd).toBe(0.1);
   });
 
   it("11) at budget: reservation is rejected with ProviderBudgetExhaustedError", async () => {
-    await recordUsageEvent({ eventType: "provider_cost", quantity: 0.5, metadata: {} });
+    await recordUsageEvent({ eventType: "provider_cost", quantity: 0.5, metadata: {}, billingUserId: FAKE_USER_ID });
 
-    await expect(checkAndReserveProviderBudget({ feature: "test", estimatedCostUsd: 0.01 })).rejects.toBeInstanceOf(
-      ProviderBudgetExhaustedError
-    );
+    await expect(
+      checkAndReserveProviderBudget({ feature: "test", estimatedCostUsd: 0.01, billingUserId: FAKE_USER_ID })
+    ).rejects.toBeInstanceOf(ProviderBudgetExhaustedError);
   });
 
   it("12) a reservation whose estimate would exceed remaining budget is blocked BEFORE any OpenAI call happens", async () => {
     // 0.45 already spent, 0.05 estimated -> exactly at the edge is allowed...
-    await recordUsageEvent({ eventType: "provider_cost", quantity: 0.45, metadata: {} });
-    await expect(checkAndReserveProviderBudget({ feature: "test", estimatedCostUsd: 0.05 })).resolves.not.toBeNull();
+    await recordUsageEvent({ eventType: "provider_cost", quantity: 0.45, metadata: {}, billingUserId: FAKE_USER_ID });
+    await expect(
+      checkAndReserveProviderBudget({ feature: "test", estimatedCostUsd: 0.05, billingUserId: FAKE_USER_ID })
+    ).resolves.not.toBeNull();
 
     // ...but one cent more pushes it over and must be rejected up front.
-    await expect(checkAndReserveProviderBudget({ feature: "test", estimatedCostUsd: 0.06 })).rejects.toBeInstanceOf(
-      ProviderBudgetExhaustedError
-    );
+    await expect(
+      checkAndReserveProviderBudget({ feature: "test", estimatedCostUsd: 0.06, billingUserId: FAKE_USER_ID })
+    ).rejects.toBeInstanceOf(ProviderBudgetExhaustedError);
   });
 
   it("Starter's provider-cost budget does not reset across a calendar month boundary — it's a lifetime cap", async () => {
@@ -184,9 +199,9 @@ describe("Starter budget reservation", () => {
         created_at: "2020-01-01T00:00:00.000Z",
       },
     ];
-    await expect(checkAndReserveProviderBudget({ feature: "test", estimatedCostUsd: 0.01 })).rejects.toBeInstanceOf(
-      ProviderBudgetExhaustedError
-    );
+    await expect(
+      checkAndReserveProviderBudget({ feature: "test", estimatedCostUsd: 0.01, billingUserId: FAKE_USER_ID })
+    ).rejects.toBeInstanceOf(ProviderBudgetExhaustedError);
   });
 });
 
@@ -198,12 +213,23 @@ describe("Reservation reconciliation and release", () => {
   });
 
   it("13) reconciling records the ACTUAL cost, not the estimate", async () => {
-    const reservation = await checkAndReserveProviderBudget({ feature: "document_generation", estimatedCostUsd: 0.2 });
+    const reservation = await checkAndReserveProviderBudget({
+      feature: "document_generation",
+      estimatedCostUsd: 0.2,
+      billingUserId: FAKE_USER_ID,
+    });
     expect(reservation).not.toBeNull();
 
-    await reconcileProviderReservation(reservation!.id, 0.0123, { model: "gpt-5.6-terra" });
+    await reconcileProviderReservation(
+      reservation!.id,
+      0.0123,
+      FAKE_USER_ID,
+      FAKE_USER_ID,
+      undefined,
+      { model: "gpt-5.6-terra" }
+    );
 
-    const total = await getProviderCostTotal();
+    const total = await getProviderCostTotal(FAKE_USER_ID);
     expect(total).toBeCloseTo(0.0123, 10);
 
     const row = fakeDb.tables["provider_cost_reservations"].find((r) => r.id === reservation!.id)!;
@@ -212,19 +238,27 @@ describe("Reservation reconciliation and release", () => {
   });
 
   it("14) a failed request releases the reservation without recording any cost", async () => {
-    const reservation = await checkAndReserveProviderBudget({ feature: "document_generation", estimatedCostUsd: 0.2 });
+    const reservation = await checkAndReserveProviderBudget({
+      feature: "document_generation",
+      estimatedCostUsd: 0.2,
+      billingUserId: FAKE_USER_ID,
+    });
     expect(reservation).not.toBeNull();
 
-    await releaseProviderReservation(reservation!.id);
+    await releaseProviderReservation(reservation!.id, FAKE_USER_ID);
 
-    const total = await getProviderCostTotal();
+    const total = await getProviderCostTotal(FAKE_USER_ID);
     expect(total).toBe(0);
 
     const row = fakeDb.tables["provider_cost_reservations"].find((r) => r.id === reservation!.id)!;
     expect(row.status).toBe("released");
 
     // Budget is free again — a second reservation for the full amount succeeds.
-    const second = await checkAndReserveProviderBudget({ feature: "document_generation", estimatedCostUsd: 0.5 });
+    const second = await checkAndReserveProviderBudget({
+      feature: "document_generation",
+      estimatedCostUsd: 0.5,
+      billingUserId: FAKE_USER_ID,
+    });
     expect(second).not.toBeNull();
   });
 });
@@ -237,12 +271,12 @@ describe("Two simultaneous reservations cannot overspend the same remaining budg
   });
 
   it("15) second concurrent reservation sees the first's hold and is rejected", async () => {
-    const first = await checkAndReserveProviderBudget({ feature: "a", estimatedCostUsd: 0.3 });
+    const first = await checkAndReserveProviderBudget({ feature: "a", estimatedCostUsd: 0.3, billingUserId: FAKE_USER_ID });
     expect(first).not.toBeNull();
 
-    await expect(checkAndReserveProviderBudget({ feature: "b", estimatedCostUsd: 0.3 })).rejects.toBeInstanceOf(
-      ProviderBudgetExhaustedError
-    );
+    await expect(
+      checkAndReserveProviderBudget({ feature: "b", estimatedCostUsd: 0.3, billingUserId: FAKE_USER_ID })
+    ).rejects.toBeInstanceOf(ProviderBudgetExhaustedError);
   });
 });
 
@@ -250,23 +284,35 @@ describe("Two simultaneous reservations cannot overspend the same remaining budg
 
 describe("Multi-call operations and automatic internal calls both count toward provider cost", () => {
   it("16) two OpenAI calls belonging to one AI Action both record their own provider_cost", async () => {
-    await recordUsageEvent({ eventType: "provider_cost", quantity: 0.01, metadata: { feature: "document_generation" } });
+    await recordUsageEvent({
+      eventType: "provider_cost",
+      quantity: 0.01,
+      metadata: { feature: "document_generation" },
+      billingUserId: FAKE_USER_ID,
+    });
     await recordUsageEvent({
       eventType: "provider_cost",
       quantity: 0.004,
       metadata: { feature: "document_generation_repair" },
+      billingUserId: FAKE_USER_ID,
     });
 
-    const total = await getProviderCostTotal();
+    const total = await getProviderCostTotal(FAKE_USER_ID);
     expect(total).toBeCloseTo(0.014, 10);
   });
 
   it("17) an automatic SEO repair call's cost is attributed to its own feature, separate from the main call", async () => {
-    await recordUsageEvent({ eventType: "provider_cost", quantity: 0.02, metadata: { feature: "document_edit" } });
+    await recordUsageEvent({
+      eventType: "provider_cost",
+      quantity: 0.02,
+      metadata: { feature: "document_edit" },
+      billingUserId: FAKE_USER_ID,
+    });
     await recordUsageEvent({
       eventType: "provider_cost",
       quantity: 0.006,
       metadata: { feature: "document_edit_repair" },
+      billingUserId: FAKE_USER_ID,
     });
 
     const events = fakeDb.tables["usage_events"].filter((e) => e.event_type === "provider_cost");
@@ -277,9 +323,14 @@ describe("Multi-call operations and automatic internal calls both count toward p
   });
 
   it("18) an automatic internal call (note metadata) counts provider cost even though it's never an AI Action", async () => {
-    await recordUsageEvent({ eventType: "provider_cost", quantity: 0.0007, metadata: { feature: "note_metadata" } });
+    await recordUsageEvent({
+      eventType: "provider_cost",
+      quantity: 0.0007,
+      metadata: { feature: "note_metadata" },
+      billingUserId: FAKE_USER_ID,
+    });
 
-    const providerTotal = await getProviderCostTotal();
+    const providerTotal = await getProviderCostTotal(FAKE_USER_ID);
     const aiActionTotal = fakeDb.tables["usage_events"].filter((e) => e.event_type === "ai_action").length;
 
     expect(providerTotal).toBeCloseTo(0.0007, 10);
@@ -304,9 +355,10 @@ describe("Transcription cost estimation and recording", () => {
       eventType: "provider_cost",
       quantity: cost,
       metadata: { feature: "transcription", durationSeconds: realDurationSeconds },
+      billingUserId: FAKE_USER_ID,
     });
 
-    const total = await getProviderCostTotal();
+    const total = await getProviderCostTotal(FAKE_USER_ID);
     expect(total).toBeCloseTo((realDurationSeconds / 60) * 0.0045, 10);
   });
 });
@@ -324,7 +376,7 @@ describe("Existing product limits are unaffected by the cost layer", () => {
         created_at: new Date().toISOString(),
       },
     ];
-    await expect(checkAiActionLimit()).rejects.toThrow();
+    await expect(checkAiActionLimit(FAKE_USER_ID)).rejects.toThrow();
   });
 
   it("22) transcription-minute limit still blocks at the configured count", async () => {
@@ -337,13 +389,14 @@ describe("Existing product limits are unaffected by the cost layer", () => {
         created_at: new Date().toISOString(),
       },
     ];
-    await expect(checkTranscriptionAllowance()).rejects.toThrow();
+    await expect(checkTranscriptionAllowance(FAKE_USER_ID)).rejects.toThrow();
   });
 
   it("23) project limit still blocks at maxProjects", async () => {
     fakeDb.tables["projects"] = Array.from({ length: PLAN_LIMITS.development.maxProjects }, (_, i) => ({
       id: `p${i}`,
       user_id: FAKE_USER_ID,
+      owner_id: FAKE_USER_ID,
       name: `Project ${i}`,
       created_at: "",
       updated_at: "",
@@ -362,10 +415,16 @@ describe("Users cannot alter provider-cost accounting (application-layer contrac
 
   it("25) reconcile/release only ever touch the caller's OWN reservation (scoped by user_id in the RPC)", async () => {
     fakeDb.tables["profiles"] = [{ id: FAKE_USER_ID, plan_id: "starter" }];
-    const reservation = await checkAndReserveProviderBudget({ feature: "x", estimatedCostUsd: 0.1 });
+    const reservation = await checkAndReserveProviderBudget({
+      feature: "x",
+      estimatedCostUsd: 0.1,
+      billingUserId: FAKE_USER_ID,
+    });
 
     setCurrentUser("someone-else-entirely");
-    await expect(reconcileProviderReservation(reservation!.id, 0.01)).rejects.toBeTruthy();
+    await expect(
+      reconcileProviderReservation(reservation!.id, 0.01, "someone-else-entirely", "someone-else-entirely", undefined)
+    ).rejects.toBeTruthy();
 
     setCurrentUser(FAKE_USER_ID);
     const row = fakeDb.tables["provider_cost_reservations"].find((r) => r.id === reservation!.id)!;
@@ -381,7 +440,7 @@ describe("Plan cannot be changed by the client", () => {
     const profileModule = await import("@/lib/entitlements/profile");
     expect(Object.keys(usageModule)).not.toContain("setUserPlan");
     expect(Object.keys(usageModule)).not.toContain("updateUserPlan");
-    expect(Object.keys(profileModule).sort()).toEqual(["getUserPlan", "getUserProfile"]);
+    expect(Object.keys(profileModule).sort()).toEqual(["getProfileForUser", "getUserPlan", "getUserProfile"]);
   });
 });
 
@@ -390,7 +449,7 @@ describe("Plan cannot be changed by the client", () => {
 describe("getUserEntitlements()", () => {
   it("27) includes providerCost internally for a capped plan, but the field is documented as UI-exempt (see app/api/usage/route.ts, which strips it)", async () => {
     fakeDb.tables["profiles"] = [{ id: FAKE_USER_ID, plan_id: "starter" }];
-    await recordUsageEvent({ eventType: "provider_cost", quantity: 0.1, metadata: {} });
+    await recordUsageEvent({ eventType: "provider_cost", quantity: 0.1, metadata: {}, billingUserId: FAKE_USER_ID });
 
     const entitlements = await getUserEntitlements();
     expect(entitlements.plan).toBe("starter");

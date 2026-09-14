@@ -122,6 +122,17 @@ function PlanConfigCard({
         </div>
 
         <div className="flex flex-col gap-1.5">
+          <Label htmlFor={`${draft.planId}-seatLimit`}>Seats (owner + collaborators)</Label>
+          <Input
+            id={`${draft.planId}-seatLimit`}
+            type="number"
+            min={1}
+            value={draft.seatLimit}
+            onChange={(e) => update("seatLimit", Number(e.target.value))}
+          />
+        </div>
+
+        <div className="flex flex-col gap-1.5">
           <Label htmlFor={`${draft.planId}-apiCostBudgetUsd`}>Internal API Cost Cap (USD)</Label>
           <Input
             id={`${draft.planId}-apiCostBudgetUsd`}

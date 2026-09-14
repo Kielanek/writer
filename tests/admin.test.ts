@@ -130,6 +130,7 @@ describe("24-26) Plan config is DB-backed (plan_configs) and admin-editable for 
       transcriptionMinutesLimit: 20,
       apiCostBudgetUsd: 0.5,
       monthlyPricePln: 0,
+      seatLimit: 1,
     });
     expect(pro).toEqual({
       planId: "pro",
@@ -139,6 +140,7 @@ describe("24-26) Plan config is DB-backed (plan_configs) and admin-editable for 
       transcriptionMinutesLimit: 180,
       apiCostBudgetUsd: null,
       monthlyPricePln: 49,
+      seatLimit: 3,
     });
   });
 
@@ -153,6 +155,7 @@ describe("24-26) Plan config is DB-backed (plan_configs) and admin-editable for 
       transcriptionMinutesLimit: 40,
       apiCostBudgetUsd: 1.25,
       monthlyPricePln: 0,
+      seatLimit: 1,
     });
 
     const limits = await getPlanLimits("starter");
@@ -172,6 +175,7 @@ describe("24-26) Plan config is DB-backed (plan_configs) and admin-editable for 
       transcriptionMinutesLimit: 500,
       apiCostBudgetUsd: null,
       monthlyPricePln: 99,
+      seatLimit: 3,
     });
 
     const pro = await getPlanLimits("pro");
@@ -210,11 +214,12 @@ describe("Plan config changes affect existing accounts' entitlement calculations
       transcriptionMinutesLimit: 20,
       apiCostBudgetUsd: 0.5,
       monthlyPricePln: 0,
+      seatLimit: 1,
     });
 
     entitlements = await getUserEntitlements();
     expect(entitlements.aiActions).toMatchObject({ used: 8, limit: 5, remaining: 0 });
-    await expect(checkAiActionLimit()).rejects.toThrow(); // now over limit, blocked
+    await expect(checkAiActionLimit(FAKE_USER_ID)).rejects.toThrow(); // now over limit, blocked
   });
 });
 
@@ -255,7 +260,7 @@ describe("3-5) Starter is lifetime-scoped — no expiration, no monthly reset", 
         created_at: "2020-01-01T00:00:00.000Z",
       },
     ];
-    await expect(checkAiActionLimit()).resolves.toBeUndefined();
+    await expect(checkAiActionLimit(FAKE_USER_ID)).resolves.toBeUndefined();
   });
 });
 

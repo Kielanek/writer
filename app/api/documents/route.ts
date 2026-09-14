@@ -8,11 +8,18 @@ import { WRITING_ENGINE_VERSION } from "@/lib/writing-engine/version";
 import { checkAiActionLimit, recordUsageEvent } from "@/lib/entitlements/usage";
 import { createDocumentSchema } from "@/lib/validation/schemas";
 import { ApiError, withApiErrorHandling } from "@/lib/utils/api";
+import { requireUser } from "@/lib/supabase/auth";
 import { DOCUMENT_TYPE_LABELS } from "@/types";
 import { env } from "@/lib/env";
 
-/** Generates a brand-new Document from the Project's Notes and creates its v1 (initial) version. */
+/**
+ * Generates a brand-new Document from the Project's Notes and creates its
+ * v1 (initial) version. Billed to the Project OWNER (`context.project.owner_id`)
+ * regardless of whether the actor is the Owner or a Member — see the
+ * collaboration model's "usage is charged to the Owner" rule.
+ */
 export const POST = withApiErrorHandling(async (request: NextRequest) => {
+  const actor = await requireUser();
   const body = await request.json();
   const input = createDocumentSchema.parse(body);
 
@@ -29,7 +36,9 @@ export const POST = withApiErrorHandling(async (request: NextRequest) => {
     throw err;
   }
 
-  await checkAiActionLimit();
+  const billing = { billingUserId: context.project.owner_id, actorUserId: actor.id, projectId: input.projectId };
+
+  await checkAiActionLimit(billing.billingUserId);
 
   let content: string;
   try {
@@ -39,6 +48,7 @@ export const POST = withApiErrorHandling(async (request: NextRequest) => {
       instructions: input.instructions,
       presetSnapshot,
       seoKeywords: input.seoSettings ?? null,
+      billing,
     });
   } catch (err) {
     if (err instanceof AiGenerationError) throw new ApiError(502, err.message);
@@ -49,6 +59,9 @@ export const POST = withApiErrorHandling(async (request: NextRequest) => {
     eventType: "ai_action",
     quantity: 1,
     metadata: { feature: "document_generation", model: env.openaiTextModel(), documentType: input.type },
+    billingUserId: billing.billingUserId,
+    actorUserId: billing.actorUserId,
+    projectId: billing.projectId,
   });
 
   // Every new Article also gets an initial meta title/description, derived
@@ -62,6 +75,7 @@ export const POST = withApiErrorHandling(async (request: NextRequest) => {
         title: DOCUMENT_TYPE_LABELS[input.type],
         content,
         primaryKeyword: seoSettings.primaryKeyword,
+        billing,
       });
       seoSettings = { ...seoSettings, ...meta };
     } catch (err) {

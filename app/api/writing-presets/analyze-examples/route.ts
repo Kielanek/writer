@@ -11,17 +11,21 @@ import { requireUser } from "@/lib/supabase/auth";
  * Purely advisory — returns suggestions for the user to review and
  * optionally add; never writes to a preset itself. Spends OpenAI money, so
  * it must require auth even though it touches no Supabase table itself.
+ * Not Project-scoped (Writing Presets remain personal — see the
+ * collaboration model's doc comments), so this always bills the caller's
+ * own plan, never a Project Owner's.
  */
 export const POST = withApiErrorHandling(async (request: NextRequest) => {
-  await requireUser();
+  const actor = await requireUser();
+  const billing = { billingUserId: actor.id, actorUserId: actor.id };
 
   const body = await request.json();
   const input = analyzeExamplesSchema.parse(body);
 
-  await checkAiActionLimit();
+  await checkAiActionLimit(billing.billingUserId);
 
   try {
-    const result = await analyzeWritingExamples(input);
+    const result = await analyzeWritingExamples(input, billing);
 
     // Real provider cost for this call was already recorded by
     // guardedGenerateText (lib/ai/guarded.ts) as its own provider_cost
@@ -30,6 +34,8 @@ export const POST = withApiErrorHandling(async (request: NextRequest) => {
       eventType: "ai_action",
       quantity: 1,
       metadata: { feature: "analyze_examples" },
+      billingUserId: billing.billingUserId,
+      actorUserId: billing.actorUserId,
     });
 
     return NextResponse.json(result);

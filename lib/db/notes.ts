@@ -4,21 +4,23 @@ import { requireUser } from "@/lib/supabase/auth";
 import type { Note, NoteType } from "@/types";
 
 /**
- * All note queries are scoped by project_id AND user_id. This is the
- * low-level data access layer — context isolation is additionally enforced
- * in lib/context/buildProjectContext.ts, which is the ONLY place AI
- * features should pull notes from.
+ * Access is governed by Project membership (RLS: `can_access_project`), not
+ * by `notes.user_id` — that column is creator ATTRIBUTION only now, never
+ * the access boundary. Queries are scoped by `project_id` alone (never
+ * `.eq("user_id", ...)`, which would silently hide a collaborator's Notes
+ * from everyone else with real access to the Project). Context isolation is
+ * additionally enforced in lib/context/buildProjectContext.ts, which is the
+ * ONLY place AI features should pull notes from.
  */
 
 export async function listNotesForProject(projectId: string): Promise<Note[]> {
   const supabase = await getSupabaseServerClient();
-  const user = await requireUser();
+  await requireUser();
 
   const { data, error } = await supabase
     .from("notes")
     .select("*")
     .eq("project_id", projectId)
-    .eq("user_id", user.id)
     .order("created_at", { ascending: false });
 
   if (error) throw error;
@@ -27,13 +29,12 @@ export async function listNotesForProject(projectId: string): Promise<Note[]> {
 
 export async function getNote(noteId: string): Promise<Note | null> {
   const supabase = await getSupabaseServerClient();
-  const user = await requireUser();
+  await requireUser();
 
   const { data, error } = await supabase
     .from("notes")
     .select("*")
     .eq("id", noteId)
-    .eq("user_id", user.id)
     .maybeSingle();
 
   if (error) throw error;
@@ -74,13 +75,12 @@ export async function updateNote(
   input: { title?: string; description?: string; content?: string }
 ): Promise<Note> {
   const supabase = await getSupabaseServerClient();
-  const user = await requireUser();
+  await requireUser();
 
   const { data, error } = await supabase
     .from("notes")
     .update(input)
     .eq("id", noteId)
-    .eq("user_id", user.id)
     .select("*")
     .single();
 
@@ -90,13 +90,12 @@ export async function updateNote(
 
 export async function deleteNote(noteId: string): Promise<void> {
   const supabase = await getSupabaseServerClient();
-  const user = await requireUser();
+  await requireUser();
 
   const { error } = await supabase
     .from("notes")
     .delete()
-    .eq("id", noteId)
-    .eq("user_id", user.id);
+    .eq("id", noteId);
 
   if (error) throw error;
 }

@@ -16,7 +16,13 @@ import { resolveApiErrorMessage } from "@/lib/utils/apiError";
 const MAX_AUDIO_FILE_BYTES = 25 * 1024 * 1024;
 const ACCEPTED_EXTENSIONS = ".mp3,.m4a,.wav,.webm,.ogg,audio/*";
 
-export function UploadAudioDialog({ projectId }: { projectId: string }) {
+export function UploadAudioDialog({
+  projectId,
+  isProjectOwner = true,
+}: {
+  projectId: string;
+  isProjectOwner?: boolean;
+}) {
   const router = useRouter();
   const [open, setOpen] = useState(false);
   const [file, setFile] = useState<File | null>(null);
@@ -53,7 +59,7 @@ export function UploadAudioDialog({ projectId }: { projectId: string }) {
 
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
-        throw new Error(resolveApiErrorMessage(data, "Failed to process the audio file."));
+        throw new Error(resolveApiErrorMessage(data, "Failed to process the audio file.", isProjectOwner));
       }
 
       toast.success("Note created");

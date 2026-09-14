@@ -51,6 +51,14 @@ export interface PlanLimits {
   usagePeriod: UsagePeriodKind;
   /** Demo commercial price only — never wired to a real payment provider. `0`/`null` for non-paid plans. */
   monthlyPricePln: number | null;
+  /**
+   * Total seats across every Project this account OWNS — the owner always
+   * occupies one, so this is "1 + how many unique collaborators." See
+   * lib/db/collaboration.ts's getOwnerSeatUsage(). A Member's OWN seat
+   * limit never matters for Projects they've been invited into — only the
+   * Project Owner's plan does (see the collaboration model's doc comments).
+   */
+  seatLimit: number;
 }
 
 /**
@@ -70,6 +78,7 @@ export const PLAN_LIMITS: Record<PlanId, PlanLimits> = {
     apiCostBudgetUsd: null,
     usagePeriod: "monthly",
     monthlyPricePln: null,
+    seatLimit: 50,
   },
   starter: {
     displayName: "Starter",
@@ -79,6 +88,7 @@ export const PLAN_LIMITS: Record<PlanId, PlanLimits> = {
     apiCostBudgetUsd: 0.5,
     usagePeriod: "lifetime",
     monthlyPricePln: 0,
+    seatLimit: 1,
   },
   pro: {
     displayName: "Pro",
@@ -88,6 +98,7 @@ export const PLAN_LIMITS: Record<PlanId, PlanLimits> = {
     apiCostBudgetUsd: null,
     usagePeriod: "monthly",
     monthlyPricePln: 49,
+    seatLimit: 3,
   },
 };
 
@@ -112,7 +123,7 @@ export async function getPlanLimits(planId: PlanId): Promise<PlanLimits> {
   const supabase = await getSupabaseServerClient();
   const { data, error } = await supabase
     .from("plan_configs")
-    .select("display_name, max_projects, ai_actions_limit, transcription_minutes_limit, api_cost_budget_usd, usage_period, monthly_price_pln")
+    .select("display_name, max_projects, ai_actions_limit, transcription_minutes_limit, api_cost_budget_usd, usage_period, monthly_price_pln, seat_limit")
     .eq("plan_id", planId)
     .maybeSingle();
 
@@ -133,5 +144,6 @@ export async function getPlanLimits(planId: PlanId): Promise<PlanLimits> {
     apiCostBudgetUsd: data.api_cost_budget_usd === null ? null : Number(data.api_cost_budget_usd),
     usagePeriod: (data.usage_period as UsagePeriodKind) ?? PLAN_LIMITS[planId].usagePeriod,
     monthlyPricePln: data.monthly_price_pln === null ? null : Number(data.monthly_price_pln),
+    seatLimit: data.seat_limit ?? PLAN_LIMITS[planId].seatLimit,
   };
 }

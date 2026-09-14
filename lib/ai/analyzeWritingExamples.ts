@@ -1,7 +1,7 @@
 import "server-only";
 import { z } from "zod";
 import { AiGenerationError } from "@/lib/ai/generateText";
-import { guardedGenerateText } from "@/lib/ai/guarded";
+import { guardedGenerateText, type BillingContext } from "@/lib/ai/guarded";
 import { buildAnalyzeExamplesPrompt } from "@/lib/ai/prompts/analyzeWritingExamples";
 import type { DocumentType } from "@/types";
 
@@ -24,14 +24,17 @@ function parseAnalysisResponse(raw: string): ExampleAnalysisResult {
  * style suggestions. Never modifies a preset itself — the caller (the
  * wizard's Examples step) decides what, if anything, to add.
  */
-export async function analyzeWritingExamples(input: {
-  documentType: DocumentType;
-  positiveExample?: string;
-  negativeExample?: string;
-}): Promise<ExampleAnalysisResult> {
+export async function analyzeWritingExamples(
+  input: {
+    documentType: DocumentType;
+    positiveExample?: string;
+    negativeExample?: string;
+  },
+  billing: BillingContext
+): Promise<ExampleAnalysisResult> {
   const { system, prompt } = buildAnalyzeExamplesPrompt(input);
 
-  const { text } = await guardedGenerateText("analyze_examples", { system, prompt, temperature: 0.3 });
+  const { text } = await guardedGenerateText("analyze_examples", { system, prompt, temperature: 0.3 }, billing);
 
   try {
     return parseAnalysisResponse(text);

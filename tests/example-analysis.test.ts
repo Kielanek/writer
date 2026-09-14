@@ -24,6 +24,8 @@ function textResult(text: string) {
   return { text, usage: null };
 }
 
+const billing = { billingUserId: FAKE_USER_ID, actorUserId: FAKE_USER_ID };
+
 beforeEach(() => {
   Object.keys(fakeDb.tables).forEach((key) => delete fakeDb.tables[key]);
   fakeDb.currentUserId = FAKE_USER_ID;
@@ -41,10 +43,13 @@ describe("analyzeWritingExamples", () => {
       )
     );
 
-    const result = await analyzeWritingExamples({
-      documentType: "linkedin_post",
-      positiveExample: "Some liked example text.",
-    });
+    const result = await analyzeWritingExamples(
+      {
+        documentType: "linkedin_post",
+        positiveExample: "Some liked example text.",
+      },
+      billing
+    );
 
     expect(result.suggestedRules).toEqual(["Open with a direct claim.", "Use concrete examples."]);
     expect(result.suggestedAvoidRules).toEqual(["Avoid rhetorical questions."]);
@@ -58,7 +63,7 @@ describe("analyzeWritingExamples", () => {
       )
     );
 
-    const result = await analyzeWritingExamples({ documentType: "article", positiveExample: "text" });
+    const result = await analyzeWritingExamples({ documentType: "article", positiveExample: "text" }, billing);
     expect(result).toEqual({ suggestedRules: [], suggestedAvoidRules: [], observations: [] });
   });
 
@@ -66,7 +71,7 @@ describe("analyzeWritingExamples", () => {
     vi.mocked(generateText).mockResolvedValueOnce(textResult("not valid json at all"));
 
     await expect(
-      analyzeWritingExamples({ documentType: "summary", positiveExample: "text" })
+      analyzeWritingExamples({ documentType: "summary", positiveExample: "text" }, billing)
     ).rejects.toThrow(AiGenerationError);
   });
 
@@ -74,7 +79,7 @@ describe("analyzeWritingExamples", () => {
     vi.mocked(generateText).mockResolvedValueOnce(textResult(JSON.stringify({ suggestedRules: "not an array" })));
 
     await expect(
-      analyzeWritingExamples({ documentType: "summary", positiveExample: "text" })
+      analyzeWritingExamples({ documentType: "summary", positiveExample: "text" }, billing)
     ).rejects.toThrow(AiGenerationError);
   });
 });

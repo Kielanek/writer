@@ -57,6 +57,7 @@ export function PlanComparison({
             <Feature>{starter.maxProjects} Projects</Feature>
             <Feature>{starter.aiActionsLimit} AI Actions</Feature>
             <Feature>{starter.transcriptionMinutesLimit} min transcription</Feature>
+            <Feature>{starter.seatLimit} seat (no collaborators)</Feature>
           </ul>
           <p className="text-xs text-muted-foreground">Lifetime allowances — no monthly reset, no time limit.</p>
         </CardContent>
@@ -86,6 +87,7 @@ export function PlanComparison({
             <Feature tone="violet">{pro.maxProjects} Projects</Feature>
             <Feature tone="violet">{pro.aiActionsLimit} AI Actions / month</Feature>
             <Feature tone="violet">{pro.transcriptionMinutesLimit} min transcription / month</Feature>
+            <Feature tone="violet">{pro.seatLimit} seats — invite collaborators</Feature>
           </ul>
         </CardContent>
         {currentPlan === "starter" && (

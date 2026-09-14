@@ -9,7 +9,7 @@ import {
   type CostGuardedFeature,
 } from "@/lib/entitlements/cost";
 import { getPlanLimits } from "@/lib/entitlements/plans";
-import { getUserProfile } from "@/lib/entitlements/profile";
+import { getProfileForUser } from "@/lib/entitlements/profile";
 import { recordUsageEvent } from "@/lib/entitlements/usage";
 import { resolveEstimateOrFailClosed, withProviderCostGuard } from "@/lib/entitlements/reservation";
 
@@ -34,22 +34,34 @@ import { resolveEstimateOrFailClosed, withProviderCostGuard } from "@/lib/entitl
  *    through checkAiActionLimit, exactly matching the product's
  *    "PRODUCT USAGE (AI Actions) vs. PROVIDER USAGE (cost)" split).
  *
+ * `billing` identifies WHOSE plan/budget this call draws from and WHO
+ * actually triggered it — for a Project-scoped call these can differ (a
+ * Member's action bills the Project Owner) — see the collaboration model's
+ * "usage is charged to the Owner" rule. For a non-project call (e.g.
+ * Analyze Examples), pass the same id for both.
+ *
  * guardedTranscribeAudio() is deliberately simpler — see its own doc
  * comment below: transcription is gated by minutes, not $, so none of the
  * above reservation/reconciliation machinery applies to it.
  */
+export interface BillingContext {
+  billingUserId: string;
+  actorUserId: string;
+  projectId?: string;
+}
 
-async function resolveCostCapContext(): Promise<{ hasCap: boolean }> {
-  const profile = await getUserProfile();
+async function resolveCostCapContext(billingUserId: string): Promise<{ hasCap: boolean }> {
+  const profile = await getProfileForUser(billingUserId);
   const limits = await getPlanLimits(profile.planId);
   return { hasCap: limits.apiCostBudgetUsd !== null };
 }
 
 export async function guardedGenerateText(
   feature: CostGuardedFeature,
-  input: { system: string; prompt: string; temperature?: number }
+  input: { system: string; prompt: string; temperature?: number },
+  billing: BillingContext
 ): Promise<TextGenerationResult> {
-  const { hasCap } = await resolveCostCapContext();
+  const { hasCap } = await resolveCostCapContext(billing.billingUserId);
   const maxOutputTokens = FEATURE_COST_GUARDS[feature].maxOutputTokens;
   const model = env.openaiTextModel();
 
@@ -68,6 +80,9 @@ export async function guardedGenerateText(
   return withProviderCostGuard({
     feature,
     estimatedCostUsd,
+    billingUserId: billing.billingUserId,
+    actorUserId: billing.actorUserId,
+    projectId: billing.projectId,
     run: async () => {
       const result = await generateText({ ...input, maxOutputTokens });
       const actualCostUsd = result.usage
@@ -98,7 +113,14 @@ export async function guardedGenerateText(
       };
     },
     recordUncapped: (actualCostUsd, metadata) =>
-      recordUsageEvent({ eventType: "provider_cost", quantity: actualCostUsd, metadata }),
+      recordUsageEvent({
+        eventType: "provider_cost",
+        quantity: actualCostUsd,
+        metadata,
+        billingUserId: billing.billingUserId,
+        actorUserId: billing.actorUserId,
+        projectId: billing.projectId,
+      }),
   });
 }
 

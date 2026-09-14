@@ -224,9 +224,17 @@ export const planConfigUpdateSchema = z.object({
   transcriptionMinutesLimit: z.number().min(0).max(1_000_000),
   apiCostBudgetUsd: z.number().positive("Must be a positive amount.").max(100_000).nullable(),
   monthlyPricePln: z.number().min(0, "Must be zero or a positive amount.").max(100_000),
+  /** Total seats (owner + unique collaborators) across every Project this plan's accounts own — see lib/db/collaboration.ts. */
+  seatLimit: z.number().int().min(1, "Must be at least 1 (the owner's own seat).").max(1_000),
 });
 
 /** Admin's manual plan override — the only place `development` is an assignable value; see components/admin/set-plan-control.tsx. */
 export const setUserPlanSchema = z.object({
   planId: z.enum(["starter", "pro", "development"]),
+});
+
+// --- Project collaboration ----------------------------------------------
+
+export const inviteMemberSchema = z.object({
+  email: emailSchema,
 });

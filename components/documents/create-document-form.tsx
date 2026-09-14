@@ -24,7 +24,13 @@ const DOCUMENT_TYPE_HINTS: Record<CreatableDocumentType, string> = {
 
 type Step = "type" | "seo" | "preset" | "instructions";
 
-export function CreateDocumentForm({ projectId }: { projectId: string }) {
+export function CreateDocumentForm({
+  projectId,
+  isProjectOwner = true,
+}: {
+  projectId: string;
+  isProjectOwner?: boolean;
+}) {
   const router = useRouter();
   const [step, setStep] = useState<Step>("type");
   const [type, setType] = useState<DocumentType | null>(null);
@@ -89,7 +95,7 @@ export function CreateDocumentForm({ projectId }: { projectId: string }) {
 
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
-        throw new Error(resolveApiErrorMessage(data, "Failed to generate the document."));
+        throw new Error(resolveApiErrorMessage(data, "Failed to generate the document.", isProjectOwner));
       }
 
       const { document } = await res.json();

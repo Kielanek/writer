@@ -7,6 +7,7 @@ import { resolveDocumentSeoConfig } from "@/lib/writing-engine/seoKeywords";
 import { checkAiActionLimit, recordUsageEvent } from "@/lib/entitlements/usage";
 import { aiEditDocumentSchema, uuidSchema } from "@/lib/validation/schemas";
 import { ApiError, withApiErrorHandling } from "@/lib/utils/api";
+import { requireUser } from "@/lib/supabase/auth";
 import { env } from "@/lib/env";
 
 interface RouteParams {
@@ -19,6 +20,7 @@ interface RouteParams {
  * model's full revised version, and records a new version (source = ai_edit).
  */
 export const POST = withApiErrorHandling(async (request: NextRequest, { params }: RouteParams) => {
+  const actor = await requireUser();
   const { documentId } = await params;
   uuidSchema.parse(documentId);
 
@@ -44,7 +46,9 @@ export const POST = withApiErrorHandling(async (request: NextRequest, { params }
     throw err;
   }
 
-  await checkAiActionLimit();
+  const billing = { billingUserId: context.project.owner_id, actorUserId: actor.id, projectId: document.project_id };
+
+  await checkAiActionLimit(billing.billingUserId);
 
   let revisedContent: string;
   try {
@@ -56,6 +60,7 @@ export const POST = withApiErrorHandling(async (request: NextRequest, { params }
       editInstruction: input.instruction,
       presetSnapshot,
       seoKeywords,
+      billing,
     });
   } catch (err) {
     if (err instanceof AiGenerationError) throw new ApiError(502, err.message);
@@ -66,6 +71,9 @@ export const POST = withApiErrorHandling(async (request: NextRequest, { params }
     eventType: "ai_action",
     quantity: 1,
     metadata: { feature: "document_edit", model: env.openaiTextModel(), documentType: document.type },
+    billingUserId: billing.billingUserId,
+    actorUserId: billing.actorUserId,
+    projectId: billing.projectId,
   });
 
   const version = await createDocumentVersion({

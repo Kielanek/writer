@@ -114,13 +114,18 @@ describe("generateDocumentMeta", () => {
       title: "Etsy Guide",
       content: "Article body",
       primaryKeyword: "etsy seo",
+      billing: { billingUserId: FAKE_USER_ID, actorUserId: FAKE_USER_ID },
     });
     expect(result).toEqual({ metaTitle: "Etsy SEO Guide", metaDescription: "Learn Etsy SEO fast." });
   });
 
   it("9) works without a primary keyword (non-mandatory input)", async () => {
     vi.mocked(generateText).mockResolvedValue(textResult('{"metaTitle": "A Guide", "metaDescription": "A summary."}'));
-    const result = await generateDocumentMeta({ title: "A Guide", content: "Body" });
+    const result = await generateDocumentMeta({
+      title: "A Guide",
+      content: "Body",
+      billing: { billingUserId: FAKE_USER_ID, actorUserId: FAKE_USER_ID },
+    });
     expect(result.metaTitle).toBe("A Guide");
   });
 });

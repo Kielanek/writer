@@ -11,14 +11,18 @@ import {
   transcriptionRequestSchema,
 } from "@/lib/validation/schemas";
 import { ApiError, withApiErrorHandling } from "@/lib/utils/api";
+import { requireUser } from "@/lib/supabase/auth";
 
 /**
  * Accepts an in-memory audio file, transcribes it, generates note metadata,
  * and saves the resulting Note. The audio itself is never written to disk
  * or any storage bucket — it exists only for the duration of this request
- * and is discarded once transcription completes (or fails).
+ * and is discarded once transcription completes (or fails). Any
+ * collaborator can transcribe into a shared Project; usage/cost is billed
+ * to the Project Owner regardless of who's uploading.
  */
 export const POST = withApiErrorHandling(async (request: NextRequest) => {
+  const actor = await requireUser();
   const formData = await request.formData();
 
   const audio = formData.get("audio");
@@ -51,12 +55,14 @@ export const POST = withApiErrorHandling(async (request: NextRequest) => {
   const project = await getProject(input.projectId);
   if (!project) throw new ApiError(404, "Project not found.");
 
-  // Blocks only if the user is already at/over their limit — the file's
-  // own duration isn't known until Whisper has transcribed it, so this
-  // can't reserve the exact amount up front (see
+  const billing = { billingUserId: project.owner_id, actorUserId: actor.id, projectId: project.id };
+
+  // Blocks only if the BILLING user is already at/over their limit — the
+  // file's own duration isn't known until Whisper has transcribed it, so
+  // this can't reserve the exact amount up front (see
   // checkTranscriptionAllowance()'s doc comment for why that's an accepted
   // MVP limitation rather than a fragile duration estimate).
-  await checkTranscriptionAllowance();
+  await checkTranscriptionAllowance(billing.billingUserId);
 
   let transcript: string;
   let durationSeconds: number;
@@ -85,10 +91,13 @@ export const POST = withApiErrorHandling(async (request: NextRequest) => {
       eventType: "transcription_seconds",
       quantity: durationSeconds,
       metadata: { feature: "transcription" },
+      billingUserId: billing.billingUserId,
+      actorUserId: billing.actorUserId,
+      projectId: billing.projectId,
     });
   }
 
-  const metadata = await generateNoteMetadata(transcript);
+  const metadata = await generateNoteMetadata(transcript, billing);
 
   const note = await createNote({
     projectId: input.projectId,

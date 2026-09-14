@@ -5,13 +5,19 @@ import { RecordNoteDialog } from "@/components/recording/record-note-dialog";
 import { UploadAudioDialog } from "@/components/recording/upload-audio-dialog";
 import { AddTextNoteDialog } from "@/components/notes/add-text-note-dialog";
 
-export function ProjectActionGroups({ projectId }: { projectId: string }) {
+export function ProjectActionGroups({
+  projectId,
+  isProjectOwner,
+}: {
+  projectId: string;
+  isProjectOwner: boolean;
+}) {
   return (
     <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
       <div className="flex flex-col gap-2 rounded-xl border bg-card p-3">
         <span className="px-0.5 text-sm font-medium text-foreground">Capture</span>
-        <RecordNoteDialog projectId={projectId} />
-        <UploadAudioDialog projectId={projectId} />
+        <RecordNoteDialog projectId={projectId} isProjectOwner={isProjectOwner} />
+        <UploadAudioDialog projectId={projectId} isProjectOwner={isProjectOwner} />
         <AddTextNoteDialog projectId={projectId} />
       </div>
 

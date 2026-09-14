@@ -3,6 +3,7 @@ import { notFound } from "next/navigation";
 import { ArrowLeft } from "lucide-react";
 import { getProject } from "@/lib/db/projects";
 import { listChatMessages } from "@/lib/db/chat";
+import { getAuthedUser } from "@/lib/supabase/auth";
 import { AskProjectChat } from "@/components/chat/ask-project-chat";
 
 export const dynamic = "force-dynamic";
@@ -16,7 +17,8 @@ export default async function AskProjectPage({
   const project = await getProject(projectId);
   if (!project) notFound();
 
-  const messages = await listChatMessages(projectId);
+  const [messages, user] = await Promise.all([listChatMessages(projectId), getAuthedUser()]);
+  const isProjectOwner = project.owner_id === user?.id;
 
   return (
     <main className="mx-auto flex w-full max-w-2xl flex-1 flex-col gap-4 px-4 py-6 sm:px-6">
@@ -33,7 +35,7 @@ export default async function AskProjectPage({
         <p className="mt-1 text-sm text-muted-foreground">{project.name}</p>
       </div>
 
-      <AskProjectChat projectId={projectId} initialMessages={messages} />
+      <AskProjectChat projectId={projectId} initialMessages={messages} isProjectOwner={isProjectOwner} />
     </main>
   );
 }

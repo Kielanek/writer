@@ -154,10 +154,12 @@ class FakeQueryBuilder implements PromiseLike<{ data: unknown; error: null; coun
       return matched;
     }
 
-    let result = matched;
+    const readable = matched.filter((r) => this.db.rlsSelectAllows(this.table, r));
+
+    let result = readable;
     if (this.orderCol) {
       const col = this.orderCol;
-      result = [...matched].sort((a, b) => {
+      result = [...readable].sort((a, b) => {
         const av = a[col] as string | number;
         const bv = b[col] as string | number;
         if (av < bv) return this.orderAsc ? -1 : 1;
@@ -238,6 +240,80 @@ export class FakeSupabaseClient {
     return new FakeQueryBuilder(table, this);
   }
 
+  /**
+   * Read-only RLS emulation for `select` queries against Project-scoped
+   * tables (projects/notes/documents/document_versions/
+   * project_chat_messages) — mirrors can_access_project() (owner or
+   * member), matching lib/db/*.ts's removal of application-layer
+   * `.eq("user_id", ...)` filters in favor of RLS alone. Fails OPEN when the
+   * referenced project isn't present in the fake `projects` table at all,
+   * since many tests exercise these tables (e.g. tests/document-versions.test.ts,
+   * tests/seo-meta.test.ts) without fully modeling `projects` — only tests
+   * that specifically assert cross-user isolation
+   * (tests/ownership-isolation.test.ts) seed a real `projects` row, so those
+   * get properly gated.
+   */
+  rlsSelectAllows(table: string, row: Row): boolean {
+    const userId = this.currentUserId;
+    const canAccess = (projectId: unknown): boolean => {
+      if (!projectId) return true;
+      const project = this.tables["projects"]?.find((p) => p.id === projectId);
+      if (!project) return true;
+      if (project.owner_id === userId) return true;
+      const members = this.tables["project_members"] ?? [];
+      return members.some((m) => m.project_id === projectId && m.user_id === userId);
+    };
+
+    switch (table) {
+      case "projects":
+        return canAccess(row.id);
+      case "notes":
+      case "documents":
+      case "project_chat_messages":
+        return canAccess(row.project_id);
+      case "document_versions": {
+        const doc = this.tables["documents"]?.find((d) => d.id === row.document_id);
+        return doc ? canAccess(doc.project_id) : true;
+      }
+      default:
+        return true;
+    }
+  }
+
+  /** Mirrors get_owner_seat_usage()'s SQL: owner + distinct member emails + distinct pending-invite emails, deduped by email, all scoped to Projects this owner owns. */
+  computeSeatUsage(ownerId: string): number {
+    const emailOf = (userId: string) => this.authUsers.find((u) => u.id === userId)?.email?.toLowerCase();
+
+    const identities = new Set<string>();
+    const ownerEmail = emailOf(ownerId);
+    if (ownerEmail) identities.add(ownerEmail);
+
+    const projects = this.tables["projects"] ?? [];
+    const ownedProjectIds = new Set(projects.filter((p) => p.owner_id === ownerId).map((p) => p.id as string));
+
+    const members = this.tables["project_members"] ?? [];
+    for (const m of members) {
+      if (ownedProjectIds.has(m.project_id as string)) {
+        const email = emailOf(m.user_id as string);
+        if (email) identities.add(email);
+      }
+    }
+
+    const invitations = this.tables["project_invitations"] ?? [];
+    const now = new Date();
+    for (const inv of invitations) {
+      if (
+        ownedProjectIds.has(inv.project_id as string) &&
+        inv.status === "pending" &&
+        new Date(inv.expires_at as string) > now
+      ) {
+        identities.add((inv.email as string).toLowerCase());
+      }
+    }
+
+    return identities.size;
+  }
+
   rpc(fnName: string, args: Record<string, unknown>) {
     if (fnName === "create_document_version") {
       const documentId = args.p_document_id as string;
@@ -275,7 +351,7 @@ export class FakeSupabaseClient {
     if (fnName === "create_project_with_limit") {
       const projects = this.tables["projects"] ?? (this.tables["projects"] = []);
       const maxProjects = args.p_max_projects as number;
-      const existingCount = projects.filter((p) => p.user_id === this.currentUserId).length;
+      const existingCount = projects.filter((p) => p.owner_id === this.currentUserId).length;
 
       if (existingCount >= maxProjects) {
         return new FakeRpcResult({ data: null, error: { message: "project_limit_reached" } });
@@ -285,6 +361,7 @@ export class FakeSupabaseClient {
       const newRow: Row = {
         id: randomUUID(),
         user_id: this.currentUserId,
+        owner_id: this.currentUserId,
         name: args.p_name,
         description: args.p_description ?? null,
         created_at: now,
@@ -310,15 +387,16 @@ export class FakeSupabaseClient {
     }
 
     if (fnName === "reserve_provider_budget") {
+      const billingUserId = args.p_user_id as string;
       const reservations =
         this.tables["provider_cost_reservations"] ?? (this.tables["provider_cost_reservations"] = []);
       const events = this.tables["usage_events"] ?? [];
 
       const completedCost = events
-        .filter((e) => e.user_id === this.currentUserId && e.event_type === "provider_cost")
+        .filter((e) => e.user_id === billingUserId && e.event_type === "provider_cost")
         .reduce((sum, e) => sum + Number(e.quantity), 0);
       const reservedCost = reservations
-        .filter((r) => r.user_id === this.currentUserId && r.status === "reserved")
+        .filter((r) => r.user_id === billingUserId && r.status === "reserved")
         .reduce((sum, r) => sum + Number(r.reserved_cost_usd), 0);
 
       const budgetLimit = args.p_budget_limit_usd as number;
@@ -331,7 +409,7 @@ export class FakeSupabaseClient {
       const now = new Date().toISOString();
       const newRow: Row = {
         id: randomUUID(),
-        user_id: this.currentUserId,
+        user_id: billingUserId,
         feature: args.p_feature,
         reserved_cost_usd: reservedCostUsd,
         actual_cost_usd: null,
@@ -344,9 +422,10 @@ export class FakeSupabaseClient {
     }
 
     if (fnName === "reconcile_provider_reservation") {
+      const billingUserId = args.p_user_id as string;
       const reservations = this.tables["provider_cost_reservations"] ?? [];
       const reservation = reservations.find(
-        (r) => r.id === args.p_reservation_id && r.user_id === this.currentUserId && r.status === "reserved"
+        (r) => r.id === args.p_reservation_id && r.user_id === billingUserId && r.status === "reserved"
       );
       if (!reservation) {
         return new FakeRpcResult({ data: null, error: { message: "reservation_not_found" } });
@@ -359,7 +438,9 @@ export class FakeSupabaseClient {
       const events = this.tables["usage_events"] ?? (this.tables["usage_events"] = []);
       events.push({
         id: randomUUID(),
-        user_id: this.currentUserId,
+        user_id: billingUserId,
+        actor_user_id: (args.p_actor_user_id as string) ?? billingUserId,
+        project_id: args.p_project_id ?? null,
         event_type: "provider_cost",
         quantity: args.p_actual_cost_usd,
         metadata: { ...(args.p_metadata as object), feature: reservation.feature },
@@ -370,9 +451,10 @@ export class FakeSupabaseClient {
     }
 
     if (fnName === "release_provider_reservation") {
+      const billingUserId = args.p_user_id as string;
       const reservations = this.tables["provider_cost_reservations"] ?? [];
       const reservation = reservations.find(
-        (r) => r.id === args.p_reservation_id && r.user_id === this.currentUserId && r.status === "reserved"
+        (r) => r.id === args.p_reservation_id && r.user_id === billingUserId && r.status === "reserved"
       );
       if (reservation) {
         reservation.status = "released";
@@ -382,11 +464,200 @@ export class FakeSupabaseClient {
     }
 
     if (fnName === "get_provider_cost_total") {
+      const billingUserId = args.p_user_id as string;
       const events = this.tables["usage_events"] ?? [];
       const total = events
-        .filter((e) => e.user_id === this.currentUserId && e.event_type === "provider_cost")
+        .filter((e) => e.user_id === billingUserId && e.event_type === "provider_cost")
         .reduce((sum, e) => sum + Number(e.quantity), 0);
       return new FakeRpcResult({ data: total, error: null });
+    }
+
+    if (fnName === "get_owner_seat_usage") {
+      return new FakeRpcResult({ data: this.computeSeatUsage(args.p_owner_id as string), error: null });
+    }
+
+    if (fnName === "invite_project_member") {
+      const actor = this.currentUserId;
+      const projectId = args.p_project_id as string;
+      const email = (args.p_email as string).trim().toLowerCase();
+
+      if (!email || !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) {
+        return new FakeRpcResult({ data: null, error: { message: "invalid_email" } });
+      }
+
+      const projects = this.tables["projects"] ?? [];
+      const project = projects.find((p) => p.id === projectId);
+      if (!project) return new FakeRpcResult({ data: null, error: { message: "project_not_found" } });
+      if (project.owner_id !== actor) return new FakeRpcResult({ data: null, error: { message: "not_project_owner" } });
+
+      const ownerEmail = this.authUsers.find((u) => u.id === project.owner_id)?.email?.toLowerCase();
+      if (email === ownerEmail) return new FakeRpcResult({ data: null, error: { message: "cannot_invite_owner" } });
+
+      const members = this.tables["project_members"] ?? (this.tables["project_members"] = []);
+      const alreadyMember = members.some(
+        (m) =>
+          m.project_id === projectId &&
+          this.authUsers.find((u) => u.id === m.user_id)?.email?.toLowerCase() === email
+      );
+      if (alreadyMember) return new FakeRpcResult({ data: null, error: { message: "already_member" } });
+
+      const invitations = this.tables["project_invitations"] ?? (this.tables["project_invitations"] = []);
+      const now = new Date();
+      const alreadyInvited = invitations.some(
+        (inv) =>
+          inv.project_id === projectId &&
+          inv.email === email &&
+          inv.status === "pending" &&
+          new Date(inv.expires_at as string) > now
+      );
+      if (alreadyInvited) return new FakeRpcResult({ data: null, error: { message: "already_invited" } });
+
+      const ownedProjectIds = new Set(projects.filter((p) => p.owner_id === project.owner_id).map((p) => p.id as string));
+      const alreadySeated =
+        members.some(
+          (m) =>
+            ownedProjectIds.has(m.project_id as string) &&
+            this.authUsers.find((u) => u.id === m.user_id)?.email?.toLowerCase() === email
+        ) ||
+        invitations.some(
+          (inv) =>
+            ownedProjectIds.has(inv.project_id as string) &&
+            inv.email === email &&
+            inv.status === "pending" &&
+            new Date(inv.expires_at as string) > now
+        );
+
+      if (!alreadySeated) {
+        const planConfigs = this.tables["plan_configs"] ?? [];
+        const profiles = this.tables["profiles"] ?? [];
+        const ownerPlanId = (profiles.find((p) => p.id === project.owner_id)?.plan_id as string) ?? "development";
+        const planConfig = planConfigs.find((c) => c.plan_id === ownerPlanId);
+        const seatLimit =
+          (planConfig?.seat_limit as number | undefined) ??
+          (ownerPlanId === "starter" ? 1 : ownerPlanId === "pro" ? 3 : Number.MAX_SAFE_INTEGER);
+
+        const seatUsage = this.computeSeatUsage(project.owner_id as string);
+
+        if (seatUsage >= seatLimit) {
+          return new FakeRpcResult({ data: null, error: { message: "seat_limit_reached" } });
+        }
+      }
+
+      const newInvitation: Row = {
+        id: randomUUID(),
+        project_id: projectId,
+        email,
+        invited_by: actor,
+        role: "member",
+        status: "pending",
+        expires_at: new Date(Date.now() + 14 * 86_400_000).toISOString(),
+        created_at: new Date().toISOString(),
+        accepted_at: null,
+        accepted_by: null,
+      };
+      invitations.push(newInvitation);
+      return new FakeRpcResult({ data: newInvitation, error: null });
+    }
+
+    if (fnName === "accept_project_invitation") {
+      const actor = this.currentUserId;
+      const invitations = this.tables["project_invitations"] ?? [];
+      const invitation = invitations.find((inv) => inv.id === args.p_invitation_id);
+      if (!invitation) return new FakeRpcResult({ data: null, error: { message: "invitation_not_found" } });
+      if (invitation.status !== "pending") {
+        return new FakeRpcResult({ data: null, error: { message: "invitation_not_pending" } });
+      }
+      if (new Date(invitation.expires_at as string) <= new Date()) {
+        invitation.status = "expired";
+        return new FakeRpcResult({ data: null, error: { message: "invitation_expired" } });
+      }
+      const actorEmail = this.authUsers.find((u) => u.id === actor)?.email?.toLowerCase();
+      if (actorEmail !== invitation.email) {
+        return new FakeRpcResult({ data: null, error: { message: "invitation_email_mismatch" } });
+      }
+
+      const projects = this.tables["projects"] ?? [];
+      const project = projects.find((p) => p.id === invitation.project_id);
+      if (!project) return new FakeRpcResult({ data: null, error: { message: "project_not_found" } });
+      if (project.owner_id === actor) return new FakeRpcResult({ data: null, error: { message: "cannot_invite_owner" } });
+
+      const members = this.tables["project_members"] ?? (this.tables["project_members"] = []);
+      let member = members.find((m) => m.project_id === invitation.project_id && m.user_id === actor);
+      if (!member) {
+        member = {
+          id: randomUUID(),
+          project_id: invitation.project_id,
+          user_id: actor,
+          role: "member",
+          added_by: invitation.invited_by,
+          created_at: new Date().toISOString(),
+        };
+        members.push(member);
+      }
+
+      invitation.status = "accepted";
+      invitation.accepted_at = new Date().toISOString();
+      invitation.accepted_by = actor;
+
+      return new FakeRpcResult({ data: member, error: null });
+    }
+
+    if (fnName === "decline_project_invitation" || fnName === "revoke_project_invitation") {
+      const invitations = this.tables["project_invitations"] ?? [];
+      const invitation = invitations.find((inv) => inv.id === args.p_invitation_id);
+      if (!invitation) return new FakeRpcResult({ data: null, error: { message: "invitation_not_found" } });
+
+      if (fnName === "revoke_project_invitation") {
+        const projects = this.tables["projects"] ?? [];
+        const project = projects.find((p) => p.id === invitation.project_id);
+        if (project && project.owner_id !== this.currentUserId) {
+          return new FakeRpcResult({ data: null, error: { message: "not_project_owner" } });
+        }
+      }
+
+      if (invitation.status === "pending") invitation.status = "revoked";
+      return new FakeRpcResult({ data: null, error: null });
+    }
+
+    if (fnName === "remove_project_member") {
+      const projects = this.tables["projects"] ?? [];
+      const project = projects.find((p) => p.id === args.p_project_id);
+      if (!project) return new FakeRpcResult({ data: null, error: { message: "project_not_found" } });
+      if (project.owner_id !== this.currentUserId) {
+        return new FakeRpcResult({ data: null, error: { message: "not_project_owner" } });
+      }
+      this.tables["project_members"] = (this.tables["project_members"] ?? []).filter(
+        (m) => !(m.project_id === args.p_project_id && m.user_id === args.p_member_user_id)
+      );
+      return new FakeRpcResult({ data: null, error: null });
+    }
+
+    if (fnName === "leave_project") {
+      const projects = this.tables["projects"] ?? [];
+      const project = projects.find((p) => p.id === args.p_project_id);
+      if (!project) return new FakeRpcResult({ data: null, error: { message: "project_not_found" } });
+      if (project.owner_id === this.currentUserId) {
+        return new FakeRpcResult({ data: null, error: { message: "owner_cannot_leave" } });
+      }
+      this.tables["project_members"] = (this.tables["project_members"] ?? []).filter(
+        (m) => !(m.project_id === args.p_project_id && m.user_id === this.currentUserId)
+      );
+      return new FakeRpcResult({ data: null, error: null });
+    }
+
+    if (fnName === "is_project_owner") {
+      const projects = this.tables["projects"] ?? [];
+      const project = projects.find((p) => p.id === args.p_project_id);
+      return new FakeRpcResult({ data: Boolean(project && project.owner_id === args.p_user_id), error: null });
+    }
+
+    if (fnName === "can_access_project") {
+      const projects = this.tables["projects"] ?? [];
+      const project = projects.find((p) => p.id === args.p_project_id);
+      const isOwner = Boolean(project && project.owner_id === args.p_user_id);
+      const members = this.tables["project_members"] ?? [];
+      const isMember = members.some((m) => m.project_id === args.p_project_id && m.user_id === args.p_user_id);
+      return new FakeRpcResult({ data: isOwner || isMember, error: null });
     }
 
     throw new Error(`Unknown rpc: ${fnName}`);

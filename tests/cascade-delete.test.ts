@@ -51,6 +51,7 @@ describe("deleting a project cascades in practice", () => {
       {
         id: PROJECT_ID,
         user_id: FAKE_USER_ID,
+        owner_id: FAKE_USER_ID,
         name: "To delete",
         description: null,
         created_at: "x",

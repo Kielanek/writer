@@ -61,8 +61,13 @@ describe("getCurrentUsagePeriod", () => {
 
 describe("recordUsageEvent + getUserEntitlements", () => {
   it("an ai_action recorded this month is reflected in entitlements usage", async () => {
-    await recordUsageEvent({ eventType: "ai_action", quantity: 1, metadata: { feature: "test" } });
-    await recordUsageEvent({ eventType: "ai_action", quantity: 1 });
+    await recordUsageEvent({
+      eventType: "ai_action",
+      quantity: 1,
+      metadata: { feature: "test" },
+      billingUserId: FAKE_USER_ID,
+    });
+    await recordUsageEvent({ eventType: "ai_action", quantity: 1, billingUserId: FAKE_USER_ID });
 
     const entitlements = await getUserEntitlements();
     expect(entitlements.aiActions.used).toBe(2);
@@ -71,7 +76,7 @@ describe("recordUsageEvent + getUserEntitlements", () => {
   });
 
   it("transcription usage is tracked in seconds internally, minutes in entitlements", async () => {
-    await recordUsageEvent({ eventType: "transcription_seconds", quantity: 90 });
+    await recordUsageEvent({ eventType: "transcription_seconds", quantity: 90, billingUserId: FAKE_USER_ID });
 
     const entitlements = await getUserEntitlements();
     expect(entitlements.transcriptionMinutes.used).toBe(1.5);
@@ -94,8 +99,8 @@ describe("recordUsageEvent + getUserEntitlements", () => {
 
   it("project count in entitlements reflects only this user's projects", async () => {
     fakeDb.tables["projects"] = [
-      { id: "p1", user_id: FAKE_USER_ID, name: "Mine", created_at: "", updated_at: "" },
-      { id: "p2", user_id: "someone-else", name: "Not mine", created_at: "", updated_at: "" },
+      { id: "p1", user_id: FAKE_USER_ID, owner_id: FAKE_USER_ID, name: "Mine", created_at: "", updated_at: "" },
+      { id: "p2", user_id: "someone-else", owner_id: "someone-else", name: "Not mine", created_at: "", updated_at: "" },
     ];
 
     const entitlements = await getUserEntitlements();
@@ -106,7 +111,7 @@ describe("recordUsageEvent + getUserEntitlements", () => {
 
 describe("checkAiActionLimit", () => {
   it("does not throw when usage is below the plan limit", async () => {
-    await expect(checkAiActionLimit()).resolves.toBeUndefined();
+    await expect(checkAiActionLimit(FAKE_USER_ID)).resolves.toBeUndefined();
   });
 
   it("throws UsageLimitError once usage reaches the plan limit", async () => {
@@ -115,7 +120,7 @@ describe("checkAiActionLimit", () => {
       { id: "e1", user_id: FAKE_USER_ID, event_type: "ai_action", quantity: limit, created_at: new Date().toISOString() },
     ];
 
-    await expect(checkAiActionLimit()).rejects.toBeInstanceOf(UsageLimitError);
+    await expect(checkAiActionLimit(FAKE_USER_ID)).rejects.toBeInstanceOf(UsageLimitError);
   });
 });
 
@@ -132,7 +137,7 @@ describe("checkTranscriptionAllowance", () => {
       },
     ];
 
-    await expect(checkTranscriptionAllowance()).rejects.toBeInstanceOf(UsageLimitError);
+    await expect(checkTranscriptionAllowance(FAKE_USER_ID)).rejects.toBeInstanceOf(UsageLimitError);
   });
 });
 
@@ -147,6 +152,7 @@ describe("Project limit enforcement (create_project_with_limit)", () => {
     fakeDb.tables["projects"] = Array.from({ length: limit }, (_, i) => ({
       id: `p${i}`,
       user_id: FAKE_USER_ID,
+      owner_id: FAKE_USER_ID,
       name: `Project ${i}`,
       created_at: "",
       updated_at: "",

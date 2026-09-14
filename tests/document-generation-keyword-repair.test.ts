@@ -33,7 +33,7 @@ function textResult(text: string) {
 }
 
 const fakeContext: ProjectContext = {
-  project: { id: "p1", user_id: "u1", name: "Test Project", description: null, created_at: "", updated_at: "" },
+  project: { id: "p1", user_id: "u1", owner_id: "u1", name: "Test Project", description: null, created_at: "", updated_at: "" },
   notes: [],
   notesText: "Some note content.",
   estimatedTokens: 10,
@@ -55,6 +55,8 @@ const seoKeywords: SeoKeywordConfig = {
   secondaryKeywords: ["Etsy SEO", "Etsy product ideas"],
 };
 
+const billing = { billingUserId: FAKE_USER_ID, actorUserId: FAKE_USER_ID };
+
 beforeEach(() => {
   vi.mocked(generateText).mockReset();
   Object.keys(fakeDb.tables).forEach((key) => delete fakeDb.tables[key]);
@@ -73,6 +75,7 @@ describe("generateDocumentContent — keyword coverage enforcement", () => {
       instructions: "Write it.",
       presetSnapshot,
       seoKeywords,
+      billing,
     });
 
     expect(content).toContain("Etsy product ideas");
@@ -96,6 +99,7 @@ describe("generateDocumentContent — keyword coverage enforcement", () => {
       instructions: "Write it.",
       presetSnapshot,
       seoKeywords,
+      billing,
     });
 
     expect(content).toContain("Etsy product ideas");
@@ -115,6 +119,7 @@ describe("generateDocumentContent — keyword coverage enforcement", () => {
       instructions: "Write it.",
       presetSnapshot,
       seoKeywords,
+      billing,
     });
 
     expect(content).toBe("# Digital Products on Etsy\n\nEtsy SEO matters a lot, still missing one term.");
@@ -132,6 +137,7 @@ describe("generateDocumentContent — keyword coverage enforcement", () => {
       instructions: "Write it.",
       presetSnapshot,
       seoKeywords,
+      billing,
     });
 
     expect(content).toBe("# Digital Products on Etsy\n\nEtsy SEO matters a lot.");
@@ -147,6 +153,7 @@ describe("generateDocumentContent — keyword coverage enforcement", () => {
       instructions: "Write it.",
       presetSnapshot,
       seoKeywords: null,
+      billing,
     });
 
     expect(content).toBe("Some content with no keywords at all.");
@@ -172,6 +179,7 @@ describe("generateDocumentEdit — keyword coverage enforcement", () => {
       editInstruction: "Shorten this by 30%.",
       presetSnapshot,
       seoKeywords,
+      billing,
     });
 
     expect(content).toContain("Etsy SEO");
@@ -192,6 +200,7 @@ describe("generateDocumentEdit — keyword coverage enforcement", () => {
       editInstruction: "Fix a typo.",
       presetSnapshot,
       seoKeywords,
+      billing,
     });
 
     expect(generateText).toHaveBeenCalledTimes(1);

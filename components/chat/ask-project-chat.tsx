@@ -13,9 +13,11 @@ import type { ProjectChatMessage } from "@/types";
 export function AskProjectChat({
   projectId,
   initialMessages,
+  isProjectOwner = true,
 }: {
   projectId: string;
   initialMessages: ProjectChatMessage[];
+  isProjectOwner?: boolean;
 }) {
   const [messages, setMessages] = useState(initialMessages);
   const [question, setQuestion] = useState("");
@@ -38,7 +40,7 @@ export function AskProjectChat({
 
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
-        throw new Error(resolveApiErrorMessage(data, "Failed to get an answer."));
+        throw new Error(resolveApiErrorMessage(data, "Failed to get an answer.", isProjectOwner));
       }
 
       const { userMessage, assistantMessage } = await res.json();

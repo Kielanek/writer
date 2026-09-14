@@ -2,6 +2,8 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { ArrowLeft } from "lucide-react";
 import { getDocument, listDocumentVersions } from "@/lib/db/documents";
+import { getProject } from "@/lib/db/projects";
+import { getAuthedUser } from "@/lib/supabase/auth";
 import { DocumentWorkspace } from "@/components/documents/document-workspace";
 
 export const dynamic = "force-dynamic";
@@ -16,7 +18,12 @@ export default async function DocumentPage({
 
   if (!document || document.project_id !== projectId) notFound();
 
-  const versions = await listDocumentVersions(documentId);
+  const [versions, project, user] = await Promise.all([
+    listDocumentVersions(documentId),
+    getProject(projectId),
+    getAuthedUser(),
+  ]);
+  const isProjectOwner = project?.owner_id === user?.id;
 
   return (
     <main className="mx-auto flex w-full max-w-2xl flex-1 flex-col gap-6 px-4 py-6 sm:px-6">
@@ -28,7 +35,7 @@ export default async function DocumentPage({
         Project
       </Link>
 
-      <DocumentWorkspace document={document} initialVersions={versions} />
+      <DocumentWorkspace document={document} initialVersions={versions} isProjectOwner={isProjectOwner} />
     </main>
   );
 }

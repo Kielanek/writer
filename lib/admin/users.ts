@@ -114,18 +114,26 @@ export async function getAdminUserDetail(userId: string): Promise<AdminUserSumma
   return toSummary(data.user, (profile as ProfileRow | null) ?? undefined);
 }
 
-/** Counts only — never content. See lib/admin/users.ts's module doc / the product spec's privacy section. */
+/** Counts only — never content. See lib/admin/users.ts's module doc / the product spec's privacy section. `projects` counts OWNED Projects (what counts against the plan limit); `documents` counts Documents this user personally created (creator attribution), which may live in Projects they don't own. */
 export async function getAdminUserContentCounts(
   userId: string
 ): Promise<{ projects: number; documents: number }> {
   const admin = createAdminClient();
   const [projects, documents] = await Promise.all([
-    admin.from("projects").select("id", { count: "exact", head: true }).eq("user_id", userId),
+    admin.from("projects").select("id", { count: "exact", head: true }).eq("owner_id", userId),
     admin.from("documents").select("id", { count: "exact", head: true }).eq("user_id", userId),
   ]);
   if (projects.error) throw projects.error;
   if (documents.error) throw documents.error;
   return { projects: projects.count ?? 0, documents: documents.count ?? 0 };
+}
+
+/** This user's seat usage as a Project OWNER (owner + unique collaborators across every Project they own) — via the admin client, since `get_owner_seat_usage` is a plain aggregate with no per-caller restriction and this is already an admin-authorized read. See lib/db/collaboration.ts for the self-service equivalent. */
+export async function getAdminUserSeatUsage(userId: string): Promise<number> {
+  const admin = createAdminClient();
+  const { data, error } = await admin.rpc("get_owner_seat_usage", { p_owner_id: userId });
+  if (error) throw error;
+  return Number(data ?? 0);
 }
 
 export interface AdminDashboardSummary {
