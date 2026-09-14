@@ -208,3 +208,17 @@ export const ALLOWED_AUDIO_MIME_TYPES = new Set([
 ]);
 
 export const MAX_AUDIO_FILE_BYTES = 25 * 1024 * 1024; // 25 MB (OpenAI transcription limit)
+
+// --- Admin ------------------------------------------------------------
+
+export const trialConfigSchema = z.object({
+  trialDays: z.number().int().min(1, "Must be at least 1 day.").max(90, "Must be 90 days or fewer."),
+  maxProjects: z.number().int().min(1).max(10_000),
+  aiActionsLimit: z.number().int().min(1).max(1_000_000),
+  transcriptionMinutesLimit: z.number().min(0).max(1_000_000),
+  apiCostBudgetUsd: z.number().positive("Must be a positive amount.").max(100_000).nullable(),
+});
+
+export const setUserPlanSchema = z.object({
+  planId: z.enum(["trial", "development"]),
+});

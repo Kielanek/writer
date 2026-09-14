@@ -378,16 +378,18 @@ describe("Users cannot alter provider-cost accounting (application-layer contrac
 
 describe("Plan cannot be changed by the client", () => {
   it("26) there is no exported function that lets a request-scoped caller write profiles.plan_id", async () => {
-    // getUserPlan() only ever reads; the only writers are the
-    // handle_new_user() trigger and scripts/set-user-plan.ts (both use the
-    // admin/secret client or SECURITY DEFINER, never the session client on
-    // behalf of an arbitrary request). Verified at the SQL level too — see
-    // supabase/tests/provider_cost_rls_verification.sql's plan_id UPDATE check.
+    // getUserPlan()/getUserProfile() only ever read; the only writers are
+    // the handle_new_user() trigger, scripts/set-user-plan.ts, and the
+    // requireAdmin()-gated /api/admin/users/[userId]/plan route (all use
+    // the admin/secret client or SECURITY DEFINER, never the session
+    // client on behalf of an arbitrary request). Verified at the SQL level
+    // too — see supabase/tests/provider_cost_rls_verification.sql's
+    // plan_id UPDATE check.
     const usageModule = await import("@/lib/entitlements/usage");
     const profileModule = await import("@/lib/entitlements/profile");
     expect(Object.keys(usageModule)).not.toContain("setUserPlan");
     expect(Object.keys(usageModule)).not.toContain("updateUserPlan");
-    expect(Object.keys(profileModule)).toEqual(["getUserPlan"]);
+    expect(Object.keys(profileModule).sort()).toEqual(["getUserPlan", "getUserProfile"]);
   });
 });
 

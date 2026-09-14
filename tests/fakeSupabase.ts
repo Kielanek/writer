@@ -203,6 +203,37 @@ export class FakeSupabaseClient {
    */
   currentUserId: string = FAKE_USER_ID;
 
+  /**
+   * Minimal stand-in for the GoTrue Admin API (lib/admin/users.ts's only
+   * dependency beyond plain table queries). Tests seed this array directly
+   * — see tests/admin.test.ts.
+   */
+  authUsers: { id: string; email?: string; created_at: string; last_sign_in_at?: string }[] = [];
+
+  auth = {
+    admin: {
+      listUsers: async ({ page = 1, perPage = 1000 }: { page?: number; perPage?: number } = {}) => {
+        const start = (page - 1) * perPage;
+        const users = this.authUsers.slice(start, start + perPage);
+        const lastPage = Math.max(1, Math.ceil(this.authUsers.length / perPage));
+        return {
+          data: {
+            users,
+            aud: "authenticated",
+            total: this.authUsers.length,
+            lastPage,
+            nextPage: page < lastPage ? page + 1 : null,
+          },
+          error: null,
+        };
+      },
+      getUserById: async (id: string) => {
+        const user = this.authUsers.find((u) => u.id === id);
+        return user ? { data: { user }, error: null } : { data: { user: null }, error: { message: "Not found" } };
+      },
+    },
+  };
+
   from(table: string) {
     return new FakeQueryBuilder(table, this);
   }

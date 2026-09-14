@@ -1,9 +1,10 @@
 import "server-only";
 import { getSupabaseServerClient } from "@/lib/db/client";
 import { requireUser } from "@/lib/supabase/auth";
-import { getUserPlan } from "@/lib/entitlements/profile";
+import { getUserProfile } from "@/lib/entitlements/profile";
 import { getPlanLimits } from "@/lib/entitlements/plans";
 import { UsageLimitError } from "@/lib/entitlements/errors";
+import { assertTrialActive } from "@/lib/entitlements/trial";
 import type { Project, ProjectWithCounts } from "@/types";
 
 export async function listProjectsWithCounts(): Promise<ProjectWithCounts[]> {
@@ -75,9 +76,9 @@ export async function createProject(input: {
   description: string | null;
 }): Promise<Project> {
   const supabase = await getSupabaseServerClient();
-  await requireUser();
-  const plan = await getUserPlan();
-  const maxProjects = getPlanLimits(plan).maxProjects;
+  const profile = await getUserProfile();
+  assertTrialActive(profile);
+  const maxProjects = (await getPlanLimits(profile.planId)).maxProjects;
 
   const { data, error } = await supabase
     .rpc("create_project_with_limit", {

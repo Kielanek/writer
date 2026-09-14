@@ -45,4 +45,16 @@ export const env = {
    * only place that reads this value.
    */
   openaiTextModel: () => process.env.OPENAI_TEXT_MODEL || "gpt-5.6-terra",
+
+  /**
+   * Server-only, deliberately NOT NEXT_PUBLIC_ — comma-separated Supabase
+   * auth user UUIDs authorized to access /admin and its API routes. See
+   * lib/admin/auth.ts's requireAdmin(), the only place this is read.
+   * Never derive admin access from anything client-supplied.
+   */
+  adminUserIds: (): string[] =>
+    (process.env.ADMIN_USER_IDS || "")
+      .split(",")
+      .map((id) => id.trim())
+      .filter(Boolean),
 };

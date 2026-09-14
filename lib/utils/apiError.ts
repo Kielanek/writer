@@ -9,8 +9,8 @@
 
 const USAGE_LIMIT_MESSAGES: Record<string, string> = {
   projects: "You've reached your project limit.",
-  ai_actions: "You've reached your monthly AI limit.",
-  transcription_minutes: "You've reached your transcription limit for this month.",
+  ai_actions: "You've reached your AI Actions limit.",
+  transcription_minutes: "You've reached your transcription limit.",
 };
 
 export function resolveApiErrorMessage(data: unknown, fallback: string): string {
@@ -25,6 +25,9 @@ export function resolveApiErrorMessage(data: unknown, fallback: string): string 
       // Never explain WHY in provider-cost/dollar terms — see
       // lib/entitlements/reservation.ts's TrialBudgetExhaustedError.
       return "You've reached the usage limit for your trial.";
+    }
+    if (body.error === "trial_expired") {
+      return "Your trial has ended.";
     }
     if (typeof body.error === "string" && body.error) {
       return body.error;

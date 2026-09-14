@@ -2,10 +2,11 @@ import "server-only";
 import { getSupabaseServerClient } from "@/lib/db/client";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { requireUser } from "@/lib/supabase/auth";
-import { getCurrentUsagePeriod } from "@/lib/entitlements/period";
-import { getPlanLimits } from "@/lib/entitlements/plans";
-import { getUserPlan } from "@/lib/entitlements/profile";
+import { getEntitlementPeriod } from "@/lib/entitlements/period";
+import { getPlanLimits, type PlanId, type PlanLimits } from "@/lib/entitlements/plans";
+import { getUserProfile } from "@/lib/entitlements/profile";
 import { UsageLimitError } from "@/lib/entitlements/errors";
+import { assertTrialActive, getTrialStatus, type TrialStatus } from "@/lib/entitlements/trial";
 import { getProviderCostTotal } from "@/lib/entitlements/reservation";
 
 export type UsageEventType = "ai_action" | "transcription_seconds" | "provider_cost";
@@ -18,7 +19,9 @@ export interface ResourceUsage {
 }
 
 export interface UserEntitlements {
-  plan: Awaited<ReturnType<typeof getUserPlan>>;
+  plan: PlanId;
+  trialStatus: TrialStatus;
+  trialEndsAt: string | null;
   projects: { used: number; limit: number; remaining: number };
   aiActions: ResourceUsage;
   transcriptionMinutes: ResourceUsage;
@@ -26,9 +29,65 @@ export interface UserEntitlements {
    * INTERNAL ONLY. Real OpenAI provider-cost accounting — never send this
    * to the frontend (GET /api/usage strips it before responding; see
    * lib/entitlements/plans.ts's apiCostBudgetUsd doc comment for why).
-   * `null` when the current plan has no cost cap (development/pro).
+   * `null` when the current plan has no cost cap (development/pro). The
+   * Admin Panel is the one place this DOES get exposed (by API design, to
+   * an already-verified admin only) — see app/api/admin/users routes.
    */
   providerCost: { usedUsd: number; limitUsd: number; remainingUsd: number } | null;
+}
+
+/**
+ * The pure arithmetic behind every entitlement snapshot — used by BOTH the
+ * self-service path (getUserEntitlements, below) and the Admin Panel's
+ * per-user view (lib/admin/entitlements.ts), so "7 / 10" means the exact
+ * same thing wherever it's computed from. Only the raw inputs differ
+ * between those two callers (session-scoped RPC totals vs. admin-client
+ * totals for an arbitrary user) — never the math.
+ */
+export function buildEntitlementsSnapshot(input: {
+  plan: PlanId;
+  limits: PlanLimits;
+  trialStatus: TrialStatus;
+  trialEndsAt: string | null;
+  periodEnd: Date;
+  projectCount: number;
+  aiActionsUsed: number;
+  transcriptionSecondsUsed: number;
+  providerCostUsed: number | null;
+}): UserEntitlements {
+  const transcriptionMinutesUsed = Math.round((input.transcriptionSecondsUsed / 60) * 10) / 10;
+  const resetsAt = input.periodEnd.toISOString();
+
+  return {
+    plan: input.plan,
+    trialStatus: input.trialStatus,
+    trialEndsAt: input.trialEndsAt,
+    projects: {
+      used: input.projectCount,
+      limit: input.limits.maxProjects,
+      remaining: Math.max(0, input.limits.maxProjects - input.projectCount),
+    },
+    aiActions: {
+      used: input.aiActionsUsed,
+      limit: input.limits.aiActionsPerMonth,
+      remaining: Math.max(0, input.limits.aiActionsPerMonth - input.aiActionsUsed),
+      resetsAt,
+    },
+    transcriptionMinutes: {
+      used: transcriptionMinutesUsed,
+      limit: input.limits.transcriptionMinutesPerMonth,
+      remaining: Math.max(0, input.limits.transcriptionMinutesPerMonth - transcriptionMinutesUsed),
+      resetsAt,
+    },
+    providerCost:
+      input.limits.apiCostBudgetUsd !== null && input.providerCostUsed !== null
+        ? {
+            usedUsd: input.providerCostUsed,
+            limitUsd: input.limits.apiCostBudgetUsd,
+            remainingUsd: Math.max(0, input.limits.apiCostBudgetUsd - input.providerCostUsed),
+          }
+        : null,
+  };
 }
 
 /**
@@ -38,15 +97,16 @@ export interface UserEntitlements {
  * `.select("quantity")` + JS-side sum, so the aggregation happens in the
  * database and the function's own `auth.uid()` check is the source of
  * truth for "whose usage this is" — never a value threaded through from
- * the caller.
+ * the caller. `periodStart` comes from getEntitlementPeriod() — a trial
+ * account's whole trial, everyone else's calendar month (see that
+ * function's doc comment).
  */
-async function getUsageTotal(eventType: UsageEventType): Promise<number> {
+async function getUsageTotal(eventType: UsageEventType, periodStart: Date): Promise<number> {
   const supabase = await getSupabaseServerClient();
-  const { start } = getCurrentUsagePeriod();
 
   const { data, error } = await supabase.rpc("get_usage_total", {
     p_event_type: eventType,
-    p_period_start: start.toISOString(),
+    p_period_start: periodStart.toISOString(),
   });
 
   if (error) throw error;
@@ -81,8 +141,9 @@ export async function recordUsageEvent(input: {
 /**
  * Call before every user-initiated AI operation that isn't note metadata
  * generation (see lib/ai/noteMetadata.ts's doc comment for why that one is
- * excluded from limits). Throws UsageLimitError — never returns false —
- * so callers can't accidentally ignore the result.
+ * excluded from limits). Throws TrialExpiredError first (an expired trial
+ * blocks the action regardless of remaining quota), then UsageLimitError —
+ * never returns false — so callers can't accidentally ignore the result.
  *
  * Concurrency note: this reads the current total, compares to the limit,
  * and returns; it does not reserve the slot. Two nearly-simultaneous
@@ -97,16 +158,19 @@ export async function recordUsageEvent(input: {
  * API, so "reserve before, release after" would need far more machinery).
  */
 export async function checkAiActionLimit(): Promise<void> {
-  const plan = await getUserPlan();
-  const limit = getPlanLimits(plan).aiActionsPerMonth;
-  const used = await getUsageTotal("ai_action");
+  const profile = await getUserProfile();
+  assertTrialActive(profile);
 
-  if (used >= limit) {
+  const limits = await getPlanLimits(profile.planId);
+  const period = getEntitlementPeriod(profile);
+  const used = await getUsageTotal("ai_action", period.start);
+
+  if (used >= limits.aiActionsPerMonth) {
     throw new UsageLimitError({
       resource: "ai_actions",
       used,
-      limit,
-      resetsAt: getCurrentUsagePeriod().end.toISOString(),
+      limit: limits.aiActionsPerMonth,
+      resetsAt: period.end.toISOString(),
     });
   }
 }
@@ -120,67 +184,50 @@ export async function checkAiActionLimit(): Promise<void> {
  * blocked. Documented rather than solved with a fragile duration estimate.
  */
 export async function checkTranscriptionAllowance(): Promise<void> {
-  const plan = await getUserPlan();
-  const limitMinutes = getPlanLimits(plan).transcriptionMinutesPerMonth;
-  const limitSeconds = limitMinutes * 60;
-  const usedSeconds = await getUsageTotal("transcription_seconds");
+  const profile = await getUserProfile();
+  assertTrialActive(profile);
+
+  const limits = await getPlanLimits(profile.planId);
+  const period = getEntitlementPeriod(profile);
+  const limitSeconds = limits.transcriptionMinutesPerMonth * 60;
+  const usedSeconds = await getUsageTotal("transcription_seconds", period.start);
 
   if (usedSeconds >= limitSeconds) {
     throw new UsageLimitError({
       resource: "transcription_minutes",
       used: Math.round((usedSeconds / 60) * 10) / 10,
-      limit: limitMinutes,
-      resetsAt: getCurrentUsagePeriod().end.toISOString(),
+      limit: limits.transcriptionMinutesPerMonth,
+      resetsAt: period.end.toISOString(),
     });
   }
 }
 
-/** Full usage snapshot for the account/usage UI (GET /api/usage). */
+/** Full usage snapshot for the account/usage UI (GET /api/usage) — the authenticated caller's own entitlements. */
 export async function getUserEntitlements(): Promise<UserEntitlements> {
   const supabase = await getSupabaseServerClient();
-  const user = await requireUser();
-  const plan = await getUserPlan();
-  const limits = getPlanLimits(plan);
-  const { end: resetsAt } = getCurrentUsagePeriod();
+  const profile = await getUserProfile();
+  const limits = await getPlanLimits(profile.planId);
+  const period = getEntitlementPeriod(profile);
 
   const [{ count: projectCount, error: projectsError }, aiActionsUsed, transcriptionSecondsUsed, providerCostUsed] =
     await Promise.all([
-      supabase.from("projects").select("id", { count: "exact", head: true }).eq("user_id", user.id),
-      getUsageTotal("ai_action"),
-      getUsageTotal("transcription_seconds"),
+      supabase.from("projects").select("id", { count: "exact", head: true }).eq("user_id", profile.id),
+      getUsageTotal("ai_action", period.start),
+      getUsageTotal("transcription_seconds", period.start),
       limits.apiCostBudgetUsd !== null ? getProviderCostTotal() : Promise.resolve(null),
     ]);
 
   if (projectsError) throw projectsError;
 
-  const transcriptionMinutesUsed = Math.round((transcriptionSecondsUsed / 60) * 10) / 10;
-
-  return {
-    plan,
-    projects: {
-      used: projectCount ?? 0,
-      limit: limits.maxProjects,
-      remaining: Math.max(0, limits.maxProjects - (projectCount ?? 0)),
-    },
-    aiActions: {
-      used: aiActionsUsed,
-      limit: limits.aiActionsPerMonth,
-      remaining: Math.max(0, limits.aiActionsPerMonth - aiActionsUsed),
-      resetsAt: resetsAt.toISOString(),
-    },
-    transcriptionMinutes: {
-      used: transcriptionMinutesUsed,
-      limit: limits.transcriptionMinutesPerMonth,
-      remaining: Math.max(0, limits.transcriptionMinutesPerMonth - transcriptionMinutesUsed),
-      resetsAt: resetsAt.toISOString(),
-    },
-    providerCost:
-      limits.apiCostBudgetUsd !== null && providerCostUsed !== null
-        ? {
-            usedUsd: providerCostUsed,
-            limitUsd: limits.apiCostBudgetUsd,
-            remainingUsd: Math.max(0, limits.apiCostBudgetUsd - providerCostUsed),
-          }
-        : null,
-  };
+  return buildEntitlementsSnapshot({
+    plan: profile.planId,
+    limits,
+    trialStatus: getTrialStatus(profile),
+    trialEndsAt: profile.trialEndsAt,
+    periodEnd: period.end,
+    projectCount: projectCount ?? 0,
+    aiActionsUsed,
+    transcriptionSecondsUsed,
+    providerCostUsed,
+  });
 }

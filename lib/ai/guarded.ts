@@ -4,25 +4,21 @@ import { transcribeAudio, type TranscriptionResult } from "@/lib/ai/transcribeAu
 import { env } from "@/lib/env";
 import {
   calculateTextCostUsd,
-  calculateTranscriptionCostUsd,
   estimateTokensFromText,
-  estimateTranscriptionDurationSecondsFromFileSize,
   FEATURE_COST_GUARDS,
   type CostGuardedFeature,
 } from "@/lib/entitlements/cost";
 import { getPlanLimits } from "@/lib/entitlements/plans";
-import { getUserPlan } from "@/lib/entitlements/profile";
+import { getUserProfile } from "@/lib/entitlements/profile";
 import { recordUsageEvent } from "@/lib/entitlements/usage";
+import { assertTrialActive } from "@/lib/entitlements/trial";
 import { resolveEstimateOrFailClosed, withProviderCostGuard } from "@/lib/entitlements/reservation";
 
 /**
  * The ONLY way any product feature should call generateText() or
- * transcribeAudio() — see the module doc below for why. Both wrappers
- * return exactly the same shape as the underlying lib/ai/*.ts function
- * they wrap, so call sites barely change: swap the import, add a `feature`
- * argument.
+ * transcribeAudio() — see the module doc below for why.
  *
- * What this buys you, centrally, for every call site:
+ * guardedGenerateText() gives every text call site, centrally:
  * 1. A conservative worst-case cost estimate BEFORE the OpenAI request.
  * 2. An atomic budget reservation for cost-capped plans (trial) — see
  *    lib/entitlements/reservation.ts — so simultaneous requests can't
@@ -38,18 +34,33 @@ import { resolveEstimateOrFailClosed, withProviderCostGuard } from "@/lib/entitl
  *    a repair pass or note-metadata call goes through here but never
  *    through checkAiActionLimit, exactly matching the product's
  *    "PRODUCT USAGE (AI Actions) vs. PROVIDER USAGE (cost)" split).
+ *
+ * guardedTranscribeAudio() is deliberately simpler — see its own doc
+ * comment below: transcription is gated by minutes, not $, so none of the
+ * above reservation/reconciliation machinery applies to it.
  */
 
-async function planHasCostCap(): Promise<boolean> {
-  const plan = await getUserPlan();
-  return getPlanLimits(plan).apiCostBudgetUsd !== null;
+/**
+ * Checked here (not just at the higher-level checkAiActionLimit/
+ * checkTranscriptionAllowance call sites) so an expired trial blocks EVERY
+ * OpenAI request uniformly — including automatic, uncounted ones like note
+ * metadata generation, which never goes through those two functions at
+ * all. lib/ai/noteMetadata.ts already catches any error here and falls
+ * back gracefully, so this doesn't newly break note creation — it just
+ * stops spending money on an expired trial's behalf.
+ */
+async function resolveCostCapContext(): Promise<{ hasCap: boolean }> {
+  const profile = await getUserProfile();
+  assertTrialActive(profile);
+  const limits = await getPlanLimits(profile.planId);
+  return { hasCap: limits.apiCostBudgetUsd !== null };
 }
 
 export async function guardedGenerateText(
   feature: CostGuardedFeature,
   input: { system: string; prompt: string; temperature?: number }
 ): Promise<TextGenerationResult> {
-  const hasCap = await planHasCostCap();
+  const { hasCap } = await resolveCostCapContext();
   const maxOutputTokens = FEATURE_COST_GUARDS[feature].maxOutputTokens;
   const model = env.openaiTextModel();
 
@@ -102,39 +113,19 @@ export async function guardedGenerateText(
   });
 }
 
+/**
+ * Transcription is gated purely by the product-facing minutes cap
+ * (checkTranscriptionAllowance() in lib/entitlements/usage.ts, enforced by
+ * the /api/transcription route before this is ever called) — NOT by the
+ * $ provider-cost budget. The currently-configured OPENAI_TRANSCRIPTION_MODEL
+ * ("whisper-1") has no verified pricing (see provider-pricing.ts), so
+ * tracking/reserving a $ cost for it would only ever be a guess; the
+ * product decision is that 120 trial minutes/month is the whole limit,
+ * full stop. Still blocks an expired trial, same as every other guarded
+ * call.
+ */
 export async function guardedTranscribeAudio(file: File): Promise<TranscriptionResult> {
-  const feature = "transcription";
-  const hasCap = await planHasCostCap();
-  const model = env.openaiTranscriptionModel();
-
-  const estimatedDurationSeconds = estimateTranscriptionDurationSecondsFromFileSize(file.size);
-  const estimatedCostUsd = resolveEstimateOrFailClosed(
-    () => calculateTranscriptionCostUsd({ model, durationSeconds: estimatedDurationSeconds }),
-    hasCap
-  );
-
-  return withProviderCostGuard({
-    feature,
-    estimatedCostUsd,
-    run: async () => {
-      const result = await transcribeAudio(file);
-      const actualCostUsd = resolveEstimateOrFailClosed(
-        () => calculateTranscriptionCostUsd({ model, durationSeconds: result.durationSeconds }),
-        hasCap
-      );
-
-      return {
-        result,
-        actualCostUsd,
-        metadata: {
-          model,
-          durationSeconds: result.durationSeconds,
-          durationMinutes: Math.round((result.durationSeconds / 60) * 100) / 100,
-          estimatedCostUsd: actualCostUsd,
-        },
-      };
-    },
-    recordUncapped: (actualCostUsd, metadata) =>
-      recordUsageEvent({ eventType: "provider_cost", quantity: actualCostUsd, metadata }),
-  });
+  const profile = await getUserProfile();
+  assertTrialActive(profile);
+  return transcribeAudio(file);
 }

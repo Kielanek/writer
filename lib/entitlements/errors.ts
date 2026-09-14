@@ -21,3 +21,17 @@ export class UsageLimitError extends Error {
     this.resetsAt = input.resetsAt;
   }
 }
+
+/**
+ * Thrown for any entitlement-gated action (AI operations, project creation)
+ * once a trial has expired. Existing content stays fully readable — this
+ * only blocks NEW actions that would need an active entitlement. Mapped
+ * centrally (lib/utils/api.ts) to `{"error": "trial_expired"}` with 403 —
+ * distinct from UsageLimitError's 429, since this isn't "used too much,"
+ * it's "your window closed."
+ */
+export class TrialExpiredError extends Error {
+  constructor() {
+    super("Trial has expired");
+  }
+}

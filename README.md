@@ -21,7 +21,7 @@ Next.js (App Router) + TypeScript + Tailwind + shadcn/ui + Supabase
 
 Create a project at [supabase.com](https://supabase.com), then open the SQL
 Editor and run every file in `supabase/migrations/` **in order**
-(`0001_init.sql` through `0009_provider_cost_budget.sql`).
+(`0001_init.sql` through `0013_allow_zero_cost_usage_events.sql`).
 `0006_auth_and_rls.sql` is the Auth migration — it adds `user_id` ownership
 columns, indexes, and Row Level Security policies to every user-owned
 table, and updates `create_document_version` to enforce and stamp
@@ -32,7 +32,27 @@ ownership. `0007_usage_limits.sql` is the Usage/Limits migration — see
 `projects` after that same migration revokes direct `INSERT` on it) — don't
 skip it. `0009_provider_cost_budget.sql` adds the real-dollar trial cost
 budget — see [Provider cost budget (trial safety cap)](#provider-cost-budget-trial-safety-cap)
-below.
+below. `0010_admin_trial_config.sql` adds the Admin Panel's DB-backed Trial
+configuration, trial period dates, and switches new-signup default to
+`trial` — see [Admin Panel](#admin-panel) below. `0011` and `0012` are both
+required bugfixes for `0010`'s `plan_configs` table: `0010` enabled RLS on
+it but left it with neither a `SELECT` grant nor a policy for
+`authenticated`, so every trial-limit read via the ordinary session client
+silently fell back to code-defined defaults instead of the admin-configured
+values — `0011` adds the missing `GRANT`, `0012` adds the missing `POLICY`
+(RLS denies all rows with zero policies even once the grant exists — the
+grant alone isn't sufficient). Don't skip either. `0013_allow_zero_cost_usage_events.sql`
+fixes a real crash (not just a documentation gap): `usage_events.quantity`
+had `check (quantity > 0)`, but the provider-cost-budget code in
+`lib/entitlements/reservation.ts` deliberately records a legitimate `$0`
+usage event when a model has no pricing entry and the current plan has no
+cost cap to protect (e.g. `development`/`pro` plans using the
+currently-configured `whisper-1` transcription model, which has no
+verified price — see [Provider cost budget](#provider-cost-budget-trial-safety-cap)
+below). That `$0` insert violated the constraint and crashed **every**
+transcription request on **any** plan with a 500, after the real (billable)
+OpenAI call had already succeeded. `0013` relaxes the constraint to
+`quantity >= 0`. Don't skip it.
 
 ### 2. Configure environment variables
 
@@ -45,6 +65,7 @@ SUPABASE_SECRET_KEY=                   # Project Settings -> API Keys -> Secret 
 OPENAI_API_KEY=                        # platform.openai.com
 OPENAI_TRANSCRIPTION_MODEL=whisper-1
 OPENAI_TEXT_MODEL=gpt-5.6-terra
+ADMIN_USER_IDS=                        # comma-separated Supabase auth user UUIDs — see Admin Panel below
 ```
 
 If your project still shows the older "Project API keys" panel instead of
@@ -185,52 +206,53 @@ assigns ownership correctly and blocks at the limit.
 ## Provider cost budget (trial safety cap)
 
 On top of the product-facing limits above, the `trial` plan carries a
-**hard internal cap on real OpenAI spend** (`apiCostBudgetUsd: 0.50` in
-`lib/entitlements/plans.ts`) — a trial account can never cost meaningfully
-more than about $0.50 in actual provider fees, independent of how the
-Projects/AI Actions/Transcription numbers are tuned. This is entirely
-internal: the user only ever sees the friendly limits (Projects, AI
-Actions, Transcription minutes) — never a dollar figure, never anything
-resembling "you cost us $0.37."
+**hard internal cap on real OpenAI spend for text generation**
+(`apiCostBudgetUsd: 0.50` in `lib/entitlements/plans.ts`) — a trial
+account can never cost meaningfully more than about $0.50 in actual
+text-generation provider fees. This is entirely internal: the user only
+ever sees the friendly limits (Projects, AI Actions, Transcription
+minutes) — never a dollar figure, never anything resembling "you cost us
+$0.37."
+
+**Transcription is deliberately excluded from this $ budget** — it's
+gated purely by the 120-minutes/month product limit
+(`transcriptionMinutesPerMonth`, enforced by `checkTranscriptionAllowance()`
+in `lib/entitlements/usage.ts`). `guardedTranscribeAudio()` in
+`lib/ai/guarded.ts` does not reserve, estimate, or record a $ cost at all;
+it only checks that the trial hasn't expired. This was a deliberate
+product decision: the currently-configured `OPENAI_TRANSCRIPTION_MODEL`
+(`whisper-1`) has no verified pricing (see `provider-pricing.ts`), and
+rather than chase down real `whisper-1` pricing or switch models, minutes
+alone are treated as a sufficient trial safety cap for transcription.
 
 **Pricing config**: `lib/entitlements/provider-pricing.ts` is the *only*
 place per-token/per-minute prices live. Currently priced: `gpt-5.6-terra`
 (text — $2.00/$0.20/$12.00 per 1M uncached-input/cached-input/output
-tokens) and `gpt-transcribe` (transcription — $0.0045/minute).
+tokens). `gpt-transcribe` ($0.0045/minute) is also defined for future use,
+but nothing currently calls it — see the transcription note above.
 
-**⚠️ Known gap, please resolve before relying on trial transcription**:
-`OPENAI_TRANSCRIPTION_MODEL` defaults to `whisper-1` (see `.env.local`),
-but the only transcription pricing configured is for `gpt-transcribe` — a
-different model. No invented price was added for `whisper-1` (only
-verified numbers go in the pricing config). Until you either (a) add a
-verified `whisper-1` price to `provider-pricing.ts`, or (b) switch
-`OPENAI_TRANSCRIPTION_MODEL` to `gpt-transcribe`, **trial accounts cannot
-transcribe audio at all** — every attempt fails closed (see "Unknown model
-safety" below) rather than silently transcribing for free. Development/pro
-accounts are unaffected (they have no cost cap to protect, so an unpriced
-model there just logs a warning and proceeds).
+**Unknown model safety (text generation only)**: a cost calculation for a
+model with no pricing entry throws (`UnknownModelPricingError`) rather
+than silently returning $0. For a plan with no cost cap (development,
+pro), that's caught, logged, and the action proceeds anyway (nothing to
+protect). For a cost-capped plan (trial), it's NOT caught — the action is
+blocked and the error is logged server-side, since allowing an unpriced
+model through would silently defeat the entire budget. This path no
+longer applies to transcription at all (see above).
 
-**Unknown model safety**: a cost calculation for a model with no pricing
-entry throws (`UnknownModelPricingError`) rather than silently returning
-$0. For a plan with no cost cap (development, pro), that's caught, logged,
-and the action proceeds anyway (nothing to protect). For a cost-capped plan
-(trial), it's NOT caught — the action is blocked and the error is logged
-server-side, since allowing an unpriced model through would silently
-defeat the entire budget.
-
-**Pre-call reservation, not just post-call accounting**: every OpenAI call
-made by a cost-capped plan reserves a conservative worst-case cost estimate
-*before* the request goes out (text: prompt length ÷ 4 for input tokens +
-a per-feature max-output-tokens ceiling from `FEATURE_COST_GUARDS`, which
-is also passed as the real `max_completion_tokens` on the live request, so
-it's a true upper bound, not a hope; transcription: file size ÷ a
-conservative 32kbps floor). `reserve_provider_budget()` (Postgres, in
-`0009_provider_cost_budget.sql`) atomically checks that reservation against
-already-committed cost — completed spend plus any other still-open
-reservation — under a per-user advisory lock, so two simultaneous requests
-can't both slip under the same remaining budget. After the real request
-succeeds, the reservation is reconciled to the provider's *actual* reported
-cost (never the estimate); on failure, it's released with nothing charged.
+**Pre-call reservation, not just post-call accounting**: every text-generation
+call made by a cost-capped plan reserves a conservative worst-case cost
+estimate *before* the request goes out (prompt length ÷ 4 for input tokens
++ a per-feature max-output-tokens ceiling from `FEATURE_COST_GUARDS`,
+which is also passed as the real `max_completion_tokens` on the live
+request, so it's a true upper bound, not a hope).
+`reserve_provider_budget()` (Postgres, in `0009_provider_cost_budget.sql`)
+atomically checks that reservation against already-committed cost —
+completed spend plus any other still-open reservation — under a per-user
+advisory lock, so two simultaneous requests can't both slip under the same
+remaining budget. After the real request succeeds, the reservation is
+reconciled to the provider's *actual* reported cost (never the estimate);
+on failure, it's released with nothing charged.
 
 **Product usage vs. provider usage**: a single user-facing "AI Action" can
 involve more than one real OpenAI call (e.g. Article generation followed
@@ -258,7 +280,11 @@ npm run set-user-plan -- <USER_UUID> development   # switch back
 ```
 
 Your own development account stays on `development` (no cost cap) unless
-you explicitly run this — signing up normally never assigns `trial`.
+you explicitly run this. **As of `0010_admin_trial_config.sql`, every NEW
+signup defaults to `trial` automatically** — see
+[Admin Panel](#admin-panel) below; `set-user-plan` is now mainly useful for
+switching an existing account, or for your own dev account if you ever
+need to test as a trial user.
 
 Verify with `supabase/tests/provider_cost_rls_verification.sql`: no one
 (not even the owning user) can read `provider_cost_reservations` directly,
@@ -266,6 +292,83 @@ Verify with `supabase/tests/provider_cost_rls_verification.sql`: no one
 reconcile/release someone else's reservation, `get_provider_cost_total()`
 only ever sums the caller's own cost, and `plan_id` still can't be changed
 by the client.
+
+## Admin Panel
+
+`/admin` — Trial configuration and a registered-users list, visible only to
+authorized admin accounts.
+
+**Authorization**: a server-only `ADMIN_USER_IDS` env var (comma-separated
+Supabase auth user UUIDs), checked against the *validated* session user id
+in `lib/admin/auth.ts`'s `requireAdmin()`/`isAdmin()` — never derived from
+`plan_id`, email, or anything client-supplied. Every `/api/admin/*` route
+calls `requireAdmin()` independently; a non-admin visiting `/admin` or any
+admin API gets a plain 404 (indistinguishable from the route not existing)
+rather than a 401/403 that would confirm an admin panel exists at all. Get
+a user's UUID from Supabase Dashboard -> Authentication -> Users, and put
+it in `ADMIN_USER_IDS` in `.env.local` (comma-separate multiple admins).
+Your own account is already there if you ran this session's setup.
+
+**New signups now default to `trial`**, not `development` — the
+`handle_new_user()` trigger (updated in `0010_admin_trial_config.sql`) sets
+`plan_id = 'trial'`, `trial_started_at = now()`, and `trial_ends_at = now()
++ (current plan_configs.trial_days)` on every new `auth.users` row. Nothing
+retroactive: every account that already existed (including yours) keeps
+whatever `plan_id` it already had.
+
+**Trial limits are DB-backed** (`plan_configs` table, one row for
+`plan_id = 'trial'`) and admin-editable from the Trial Settings form —
+`development`/`pro` stay code-defined in `lib/entitlements/plans.ts` on
+purpose (developer-controlled, not an admin-editable product limit, and
+this way local dev is never blocked on a database row existing). A change
+to Projects/AI Actions/Transcription/Cost Cap applies to every *current*
+trial account immediately (remaining allowance is always `limit − usage`,
+computed fresh on every check — there's no per-user snapshot to
+invalidate). Changing the trial **duration** only affects brand-new
+signups; an existing trial account's `trial_ends_at` is fixed at signup and
+is never silently rewritten.
+
+**Trial expiry**: once `now() >= trial_ends_at`, `lib/entitlements/trial.ts`'s
+`getTrialStatus()` reports `"expired"`, and `assertTrialActive()` blocks
+every entitlement-gated action (AI operations, project creation) with a
+structured `{"error": "trial_expired"}` (403) — shown to the user as "Your
+trial has ended." Existing Projects/Notes/Documents remain fully readable;
+only *new* actions are blocked. No Stripe/upgrade flow yet — a subtle
+"Plan upgrades are coming soon" state is all that's shown.
+
+**User list**: sourced from the GoTrue Admin API (`auth.users` — id, email,
+created_at, last_sign_in_at) merged server-side with `profiles` and each
+user's entitlements (see below), never exposed to the browser directly.
+Paginated (25/page) and searchable by email substring or exact user UUID,
+newest accounts first. The user detail page (`/admin/users/[userId]`) adds
+Project/Document *counts* only — this panel is for account/plan/usage
+oversight, never for reading Note/Document/Ask-Project content.
+
+**One source of truth for usage math**: the Admin Panel's per-user numbers
+(`lib/admin/entitlements.ts`'s `getEntitlementsForUser()`) are built from
+the exact same `buildEntitlementsSnapshot()` function that the self-service
+`getUserEntitlements()` (product enforcement) uses — only the raw-data
+fetching differs (admin/secret client for an arbitrary user vs. the
+session-scoped RPCs for "self"). "Admin says 7/10" and "the backend that
+blocks the 11th action sees 7/10" can't diverge. Internal provider cost
+(`$0.1834 / $0.50`) IS shown here, admin-only — `GET /api/usage` (the
+normal Account page) strips it before responding.
+
+**Audit log**: every Trial Settings change and manual plan override writes
+an `admin_audit_log` row (`{admin_user_id, action, metadata: {before,
+after}}`) via the admin client — no UI for it yet (`select * from
+admin_audit_log order by created_at desc` in the SQL editor if needed).
+
+**Manual plan override** (User Detail page, Set Plan: Trial/Development) is
+for testing — not a general plan editor; paid plans arrive with Stripe
+later. Switching to Trial starts a fresh trial period from the current
+`trial_days` setting; switching to Development clears trial dates entirely.
+
+Verify with `supabase/tests/admin_rls_verification.sql`: `plan_configs` is
+readable but never writable by `authenticated`, `admin_audit_log` has zero
+access for anyone but the admin/secret client, `profiles`' trial columns
+still can't be touched by the client, and a fresh signup gets `trial` +
+both trial dates automatically.
 
 ## Checks
 

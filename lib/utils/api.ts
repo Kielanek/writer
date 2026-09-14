@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { ZodError } from "zod";
-import { UsageLimitError } from "@/lib/entitlements/errors";
+import { TrialExpiredError, UsageLimitError } from "@/lib/entitlements/errors";
 import { TrialBudgetExhaustedError } from "@/lib/entitlements/reservation";
 
 export class ApiError extends Error {
@@ -23,6 +23,9 @@ export function withApiErrorHandling<Args extends unknown[]>(
     try {
       return await handler(...args);
     } catch (err) {
+      if (err instanceof TrialExpiredError) {
+        return NextResponse.json({ error: "trial_expired" }, { status: 403 });
+      }
       if (err instanceof TrialBudgetExhaustedError) {
         // Deliberately minimal — see lib/entitlements/reservation.ts: this
         // must never carry a used/limit in USD, unlike UsageLimitError's

@@ -22,11 +22,13 @@ export interface ProviderReservation {
 }
 
 /**
- * Current all-time (since the user's profile was created — see the
- * migration's doc comment on why that stands in for the not-yet-built
- * `trial_started_at`) real provider cost, in USD. Internal only — never
- * wired into a route response; see getUserEntitlements()'s `providerCost`
- * field, which is deliberately stripped before GET /api/usage returns it.
+ * Real provider cost, in USD, since the account's trial_started_at (or
+ * profile creation, for accounts with no trial period — see
+ * supabase/migrations/0010_admin_trial_config.sql's get_provider_cost_total()).
+ * Internal only — never wired into a route response; see
+ * getUserEntitlements()'s `providerCost` field, which is deliberately
+ * stripped before GET /api/usage returns it (the Admin Panel is the one
+ * place it IS exposed, to an already-verified admin only).
  */
 export async function getProviderCostTotal(): Promise<number> {
   const supabase = await getSupabaseServerClient();
@@ -53,7 +55,7 @@ export async function checkAndReserveProviderBudget(input: {
   estimatedCostUsd: number;
 }): Promise<ProviderReservation | null> {
   const plan = await getUserPlan();
-  const budget = getPlanLimits(plan).apiCostBudgetUsd;
+  const budget = (await getPlanLimits(plan)).apiCostBudgetUsd;
   if (budget === null) return null;
 
   const supabase = await getSupabaseServerClient();
